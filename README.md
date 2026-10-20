@@ -132,6 +132,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 | [docs/TESTING_STRATEGY.md](docs/TESTING_STRATEGY.md) | 测试分层、故障注入、协议/安全/平台验收 |
 | [docs/AI_DEVELOPMENT_GUIDE.md](docs/AI_DEVELOPMENT_GUIDE.md) | AI 编码流程、任务模板、证据要求 |
 | [docs/ISSUES_AND_RISKS.md](docs/ISSUES_AND_RISKS.md) | 风险登记册、旧审查纠错、关闭条件 |
+| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | 本机 shell / 代理 / DNS / 工具链限制，各平台 WebView 与 API 差异 |
 | [docs/adr/](docs/adr/) | 架构决策记录（ADR）：为什么选 Tauri、为什么先做 L1、Gmail 怎么处理 |
 | [CHANGELOG.md](CHANGELOG.md) | 变更日志 |
 

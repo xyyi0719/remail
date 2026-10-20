@@ -90,6 +90,22 @@ Gmail/OAuth 注册审核不再是当前关键路径；126、Exchange 不进入�
 标签、规则、联系人、稍后处理逐项交付。每设备独立的事实必须在 UI 明示。
 Gmail 将来有需求再开独立决策：授权流程、scope、个人使用与公开发布要求均重新核实，不预设 Device Code 可用。
 
+### P5-L：Linux 支持（可选，不承诺）
+
+**当前事实**：Linux 编译已被 CI 验证（ubuntu job 编译了 tauri 应用本体）；**运行未验证**。
+详见 [ENVIRONMENT.md §2](ENVIRONMENT.md)。
+
+若要支持 Linux，需额外完成：
+
+- [ ] WebKitGTK 沙箱验证：sandbox iframe、CSP、`srcdoc`、远程图片阻断的行为与 Chromium 有差异，
+      必须重跑 [TESTING_STRATEGY §2.4](TESTING_STRATEGY.md) 的隔离测试，不能直接沿用 Windows 结论
+- [ ] Secret Service 凭据后端（与 Windows Credential Manager / Android Keystore 分离实现）
+- [ ] 托盘（libayatana-appindicator）、通知（D-Bus）、开机自启（XDG autostart .desktop）
+- [ ] 打包链路验证（AppImage / deb / rpm）
+- [ ] 至少 2 个主流发行版的真机运行验证（Ubuntu / Fedora 系）
+
+> 优先级低于 P4 的 Windows/Android 验收。**在用户明确提出需求前不投入。**
+
 ### P6：可选 L2 加密同步
 
 先做威胁模型、账户认证、CAS、密钥恢复、回滚保护，再实现服务与双设备测试。凭据同步默认关闭，不能因已有 trait 宣称无需返工。

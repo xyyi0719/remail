@@ -118,6 +118,7 @@ feat(ui): 邮件列表支持按账户筛选
 
 以 [TESTING_STRATEGY.md](TESTING_STRATEGY.md) 为当前验收规范。下表是目标设施，不能据此宣称 Vitest/Playwright/Mock 服务器已安装或已通过；真实 Tauri/WebView 与 Android 另需宿主验证。
 AI 工作流与审查模板见 [AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md)。
+本机 shell / 代理 / 工具链限制与各平台差异见 [ENVIRONMENT.md](ENVIRONMENT.md)；写脚本或 CI 前先查它。
 
 | 层 | 工具 | 要求 |
 |---|---|---|

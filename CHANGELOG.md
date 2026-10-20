@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 环境特性与平台差异文档 `docs/ENVIRONMENT.md`：本机 shell / 代理 / DNS / 工具链限制，各平台 WebView 与 API 差异，写脚本与 CI 前的检查清单
 - 测试用例扩写计划 `docs/TESTING_STRATEGY.md §5`：T1–T10 优先级、每项的「算完成」标准、用例数作为进度指标
 - CI 新增「Report test case count」步骤，输出 Rust 用例数到 job summary
 - 详细技术规划文档 `docs/PLAN.md`（v1.2，历史参考），含协议核查、UI 选型对比、数据模型、同步引擎设计
@@ -42,6 +43,7 @@
 ### Notes
 - 关键技术选型已锁定：Tauri 2 + React/TS、先做 L1（IMAP 原生）同步并预留 L2 抽象
 - 后续持续扩写测试用例，按 TESTING_STRATEGY §5 的 T1–T10 顺序在 P0–P3 分批推进
+- Linux 编译已由 CI 验证，运行未验证；列为可选 P5-L，需求明确后再投入
 - Gmail 暂缓，不再是 P1 关键路径；恢复接入前需重新核实授权与发布要求
 - 弃用同步版 `imap` crate
 - 尚未实现：SQLite 持久化、协议适配、收发链路、自动化业务测试

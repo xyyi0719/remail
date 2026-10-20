@@ -30,6 +30,9 @@
 
 ## 3. 单任务流程
 
+0. **若任务涉及脚本、CI、命令、网络或平台差异，先读 [ENVIRONMENT.md](ENVIRONMENT.md)。**
+   该文档记录本机 shell / 代理 / DNS / 工具链限制与各平台 WebView 差异，
+   是避免重复踩坑的权威来源。
 1. 读取相关代码、架构、风险条目及测试规范。
 2. 输出事实/未知、范围、验收标准与计划修改文件。
 3. 提出成功/失败/边界测试，确认需要的外部授权。
@@ -86,6 +89,20 @@ FTS 必测：正文晚到、更新、删除、回滚、重建。
 ```
 
 ## 5. 常见错误与正确检查方式
+
+### 5.0 环境类（先查 ENVIRONMENT.md）
+
+- **Shell 假设**：Windows 默认是 PowerShell，不支持 `$(...)`、`grep`、`2>/dev/null`。
+  写 CI 步骤时显式声明 `shell: bash`，或改用跨平台写法。
+- **多层引号**：命令会被外层 shell 再解释一次。`curl -w "%{http_code}"` 的 `%{` 可能被展开；
+  复杂逻辑改用脚本文件而非单行命令。
+- **网络**：本机 `github.com` 被 DNS 劫持到 127.0.0.1、SSH 22 端口被拒；
+  `gh` 会自动读系统代理，`git`/`curl` 不会。需要时用 `api.github.com`、SSH over 443 或 `--resolve`。
+- **注释里的文档路径**：相对源文件目录算层级，`crates/remail-core/src/` 是 3 层，`apps/shell/src-tauri/src/` 是 4 层。
+- **平台差异**：Windows/Android 是 Chromium 系，Linux/macOS 是 WebKit 系；
+  沙箱 iframe、CSP、`srcdoc` 的行为不能跨引擎推断。
+
+### 5.1 代码类
 
 - **并发**：短临界区且不跨 await，`std::sync::Mutex` 可能合适；需要异步等待或持锁跨 await 时评估异步锁，优先避免持锁跨网络等待。两个加锁自增本身不是数据竞争；未等待任务完成是生命周期问题。
 - **异步**：不是所有 future 都必须立刻 await（可能 spawn/join/返回）；必须证明任务被监督、错误被观察、退出可取消。
