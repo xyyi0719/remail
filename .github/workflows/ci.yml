@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+          sudo apt-get install -y libayatana-appindicator3-dev \
+            || sudo apt-get install -y libappindicator3-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/* -> target
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+  web:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/shell/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefix apps/shell
+
+      - name: Type check
+        run: npm run typecheck --prefix apps/shell
+
+      - name: Build
+        run: npm run build --prefix apps/shell
+
+  docs:
+    name: Docs sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check internal doc links
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          # 覆盖 docs/ 与根目录的 README/CHANGELOG，避免根目录链接无人校验。
+          targets = sorted(pathlib.Path('docs').rglob('*.md'))
+          targets += [p for p in (pathlib.Path('README.md'), pathlib.Path('CHANGELOG.md')) if p.exists()]
+          bad = []
+          for md in targets:
+              text = md.read_text(encoding='utf-8')
+              # 去掉代码块，避免示例中的路径被误判为链接。
+              text = re.sub(r'```.*?```', '', text, flags=re.S)
+              for m in re.finditer(r'\[[^\]]*\]\(([^)#]+?)(?:#[^)]*)?\)', text):
+                  target = m.group(1)
+                  if target.startswith(('http://', 'https://', 'mailto:')):
+                      continue
+                  resolved = (md.parent / target).resolve()
+                  if not resolved.exists():
+                      bad.append(f"{md}: {target}")
+          if bad:
+              print("Broken internal links:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print(f"All internal doc links OK ({len(targets)} files)")
+          PY
+
+      - name: Check Rust doc-comment links
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          # 校验源码注释里指向 docs/ 的相对路径（曾经全部断链）。
+          bad = []
+          for rs in pathlib.Path('.').rglob('*.rs'):
+              if 'target' in rs.parts or 'node_modules' in rs.parts:
+                  continue
+              text = rs.read_text(encoding='utf-8')
+              for m in re.finditer(r'\((\.\.?/[^)\s]+)\)', text):
+                  resolved = (rs.parent / m.group(1)).resolve()
+                  if not resolved.exists():
+                      bad.append(f"{rs}: {m.group(1)}")
+          if bad:
+              print("Broken doc-comment links:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("All Rust doc-comment links OK")
+          PY

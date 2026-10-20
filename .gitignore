@@ -1,0 +1,51 @@
+# ---- Rust ----
+/target
+**/target/
+*.rs.bk
+*.pdb
+*.rlib
+
+# ---- Node / Vite ----
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+.npm
+
+# ---- Tauri ----
+# Android/iOS 生成物（含签名文件与私钥，切勿提交）
+apps/shell/src-tauri/gen/
+apps/shell/src-tauri/gen/android/
+apps/shell/gen/
+apps/shell/gen/schemas/
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+
+# ---- 密钥与本地配置（严禁提交）----
+.env
+.env.*
+!.env.example
+oauth/clients.json
+oauth/clients.local.json
+**/clients.local.json
+
+# ---- 本地数据 / 运行时产物 ----
+data/
+*.db
+*.db-wal
+*.db-shm
+/logs/
+/tmp/
+
+# ---- 编辑器 ----
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~

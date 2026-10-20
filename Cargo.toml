@@ -1,0 +1,48 @@
+[workspace]
+# edition 2024 隐含 resolver 3（MSRV 感知的特性解析），显式写出避免旧默认值。
+resolver = "3"
+members = [
+    "crates/remail-core",
+    "apps/shell/src-tauri",
+]
+
+# ---------------------------------------------------------------------------
+# 工作区共享元数据
+# ---------------------------------------------------------------------------
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+authors = ["xyyi0719"]
+repository = "https://github.com/remail/remail"
+
+# ---------------------------------------------------------------------------
+# 工作区共享依赖
+# 升级版本时只改这里一处。
+# ---------------------------------------------------------------------------
+[workspace.dependencies]
+remail-core = { path = "crates/remail-core" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ---------------------------------------------------------------------------
+# 发布配置
+# 放在根 workspace：子 package 里的 profile 会被 cargo 忽略。
+#
+# panic = "abort" 的取舍：体积更小，但任一 panic 会终止整个进程，
+# 后台同步任务无法用 catch_unwind 兜底。改为 "unwind" 可让 tokio 任务
+# 级别的 panic 不至于拖垮应用（见 docs/ISSUES_AND_RISKS.md R13）。
+# ---------------------------------------------------------------------------
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
