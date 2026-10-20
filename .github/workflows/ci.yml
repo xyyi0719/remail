@@ -54,6 +54,8 @@ jobs:
         run: cargo test --workspace
 
       - name: Report test case count
+        # windows-latest 默认 shell 是 PowerShell，不支持 $(...)/grep/2>/dev/null。
+        shell: bash
         run: |
           count=$(cargo test --workspace -- --list 2>/dev/null | grep -c ': test$' || true)
           echo "Rust test cases: $count"
