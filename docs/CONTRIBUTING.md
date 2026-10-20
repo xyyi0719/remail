@@ -131,6 +131,8 @@ AI 工作流与审查模板见 [AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md
 
 **门槛**：新增协议解析 / 状态机 / 冲突处理代码，必须同时带测试。
 
+用例扩写的优先级、阶段归属与「算完成」标准见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
+
 ---
 
 ## 文档规则

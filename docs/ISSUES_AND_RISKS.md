@@ -9,7 +9,7 @@
 - **仓库事实**：workspace 目前只有 `remail-core` 与 Tauri shell；`list_accounts` 返回空列表；没有 SQLite 迁移、同步引擎或实际收发能力。
 - **规划**：其他 crate、测试设施、加密服务均不是已交付功能。
 - **外部未知**：国内服务商能力、并发连接限制、Android 后台行为，必须用注明环境的实测建立证据。
-- `cargo test` 成功但用例数极少（当前仅 `remail-core` 错误分类的 4 个用例），只证明测试命令可执行，不证明业务正确。
+- `cargo test` 成功但用例数极少（当前仅 `remail-core` 错误分类的 4 个用例），只证明测试命令可执行，不证明业务正确。扩写计划见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
 - 2026-10-20 复核：Rust 1.99.1 / Node 22.21.0 / 本机仅 JDK 8 且无 Android SDK → **Android 构建在本机暂不可行**（P4 需先装 JDK 17 + SDK/NDK）。
 
 ## 2. 对上一版审查的纠错
@@ -49,7 +49,7 @@
 | R11 | 范围治理 | 文档把计划当事实，旧策略与新范围冲突 | 中 | ROADMAP 为执行范围入口；旧报告标废止；变更附验收证据 | 本轮修订 |
 | R12 | 可选扩展 | L2 接口过早冻结、远端冲突与密钥恢复未定义 | 中 | P0 最小契约 + mock；P6 前另做威胁模型，不承诺零返工 | 待实现 |
 | R13 | 运行平台 | release profile 用 `panic = "abort"`，后台同步任务 panic 会杀掉整个应用 | 中 | 决策：保持 abort（体积优先）或改 unwind（可容错）并在 task 边界 `catch_unwind`；需实测崩溃行为后定 | 待决策 |
-| R14 | 工程验证 | CI 无业务测试，静态检查通过不代表行为正确 | 高 | 每条 P 阶段出口都要求对应测试；CI 加覆盖率报告；`cargo test` 用例数作为进度指标 | 已开始 |
+| R14 | 工程验证 | CI 无业务测试，静态检查通过不代表行为正确 | 高 | 按 [TESTING_STRATEGY §5](TESTING_STRATEGY.md) 的 T1–T10 顺序扩写用例；每阶段出口要求对应测试；用例数作为进度指标写入 CHANGELOG | 已开始 |
 
 ## 4. 处理顺序
 

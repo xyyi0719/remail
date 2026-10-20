@@ -53,6 +53,12 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Report test case count
+        run: |
+          count=$(cargo test --workspace -- --list 2>/dev/null | grep -c ': test$' || true)
+          echo "Rust test cases: $count"
+          echo "### Rust test cases: $count" >> "$GITHUB_STEP_SUMMARY"
+
   web:
     name: Frontend
     runs-on: ubuntu-latest
