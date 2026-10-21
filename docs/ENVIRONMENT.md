@@ -216,9 +216,9 @@ done
 #!/usr/bin/env bash
 # GitHub 连通性探针 + 推送：本机连接间歇性失败，必须重试。
 # 探针和 push 放在同一循环：探针过了 push 也可能被 reset。
-# TRIES=12 实测有整轮 12 次全失败的情况；探针单次成功率约 25%，
-# 按 0.75^N 估算，TRIES=40 时整轮失败的概率已可忽略。
-TRIES=40
+# TRIES=6 是刻意收敛的上限：探针单次成功率约 25%，整轮全失败的概率约 18%。
+# 6 次仍不通就停下报给维护者，不要继续刷。
+TRIES=6
 for i in $(seq 1 $TRIES); do
   if git ls-remote origin >/dev/null 2>&1; then
     echo "[$i/$TRIES] 探针 OK -> 执行 push"
@@ -231,7 +231,7 @@ for i in $(seq 1 $TRIES); do
   fi
   sleep 3
 done
-echo "PUSH_FAIL: $TRIES 次尝试内未完成推送"; exit 1
+echo "PUSH_FAIL: $TRIES 次尝试内未完成推送；停下报给维护者，不要继续刷"; exit 1
 ```
 
 > 2026-10-21 实测：该脚本把一次真实推送送到了远端（第 4 次尝试通过），
