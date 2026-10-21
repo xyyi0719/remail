@@ -167,26 +167,54 @@ curl -sS -o /dev/null -w 'code=%{http_code}\n' -x "http://$PXY" https://api.gith
 → **单次探针失败不等于断网**。先重试再下结论；`gh` 走 Go 运行时代理、最稳，
 `curl`（Windows schannel）过企业代理最容易 TLS 握手失败，**不要把它当唯一判据**。
 
+**三种失败分属不同通道，别混判（2026-10-21 逐条定位）**：
+
+| 通道 | 失败信息 | 含义 |
+|---|---|---|
+| SSH over 443（推送走这条） | `Connection reset by <ip> port 443` + `fatal: Could not read from remote repository.` | **TCP 443 能连上，SSH 会话被中途 reset**；与证书、密钥、仓库权限都无关 |
+| `gh api`（HTTPS / 代理） | `net/http: TLS handshake timeout` | Go 运行时与企业代理之间的 TLS 握手超时 |
+| `curl`（HTTPS / 代理） | `schannel: failed to receive handshake, SSL/TLS connection failed` | Windows schannel 握手失败，**最不稳，不可作唯一判据** |
+
+**遇到 SSH 的 `Connection reset` 不要换 GitHub IP**：2026-10-21 实测 9 个候选
+（`20.205.243.160`、`20.205.243.166`、`20.27.177.113`、`20.200.245.247`、
+`20.207.73.82`、`20.248.137.48`、`140.82.112.3`、`140.82.113.3`、`140.82.114.3`）：
+
+- TCP 443 对**所有**候选都通 → 问题不在路由，在会话层；
+- 但**只有本地 DNS 解析到的那个**接受 `ssh.github.com` 的 SSH 服务，其余全部
+  `Connection closed by <ip> port 443`。
+
+→ **换 IP 无效，只能重试。** 候选 IP 也会轮换，不要写进脚本。
+
 **探不通就不要 push**：连接失败时反复推送只会产生半截状态或让 CI 空跑。
 先按上表定位到具体通道，修好再推，并把实际探针输出当作证据记录。
 
-建议用带重试的探针（推送前跑一次，通过再推）：
+**探针与 push 必须放在同一个重试循环里**：探针通过之后，`push` 自身仍可能在传输中被 reset。
+2026-10-21 的一次真实推送，探针在前 3 次全失败、**第 4 次**才通过 —— `TRIES=3` 不够用。
+
+建议用带重试的探针 + 推送脚本（推送前跑一次，通过即推）：
 
 ```bash
 #!/usr/bin/env bash
-# GitHub 连通性探针：推送前必跑。本机连接间歇性失败，必须重试。
-TRIES=3
+# GitHub 连通性探针 + 推送：本机连接间歇性失败，必须重试。
+# 探针和 push 放在同一循环：探针过了 push 也可能被 reset。
+TRIES=12
 for i in $(seq 1 $TRIES); do
   if git ls-remote origin >/dev/null 2>&1; then
-    echo "OK: 推送通道可用 (第 $i 次尝试)"; exit 0
+    echo "[$i/$TRIES] 探针 OK -> 执行 push"
+    if git push origin main; then
+      echo "PUSH_OK"; exit 0
+    fi
+    echo "push 失败（可能传输中被 reset），继续重试…"
+  else
+    echo "[$i/$TRIES] 探针失败（连接被 reset），3 秒后重试…"
   fi
-  echo "尝试 $i/$TRIES 失败，2 秒后重试…"
-  sleep 2
+  sleep 3
 done
-echo "FAIL: 推送通道在 $TRIES 次尝试内均不可用，不要 push"; exit 1
+echo "PUSH_FAIL: $TRIES 次尝试内未完成推送"; exit 1
 ```
 
-> 2026-10-21 实测：该探针连续 3 轮全部通过（均在第 2 次尝试成功）。
+> 2026-10-21 实测：该脚本把一次真实推送送到了远端（第 4 次尝试通过），
+> 随后 CI run `39559605711` 的 4 个 job 全绿。
 
 ### 1.6 文件系统
 
