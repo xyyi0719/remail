@@ -130,6 +130,20 @@ feat(ui): 邮件列表支持按账户筛选
 
 ---
 
+## 推送前先探明连通性
+
+本机 `github.com` 被 DNS 劫持，直连必失败。**访问 GitHub（推送、拉取、调 API）之前，先探明能不能连通，再执行操作**：
+
+```bash
+git ls-remote origin      # 推送走的真实通道（SSH over 443）
+gh auth status            # API 通道
+```
+
+探不通就不推，先按 [ENVIRONMENT.md §1.5.1](ENVIRONMENT.md) 定位到具体通道再修。
+代理地址是本机手动设置、随网络变化，**不要写进文档或脚本**，用前读注册表当前值。
+
+---
+
 ## 测试策略
 
 以 [TESTING_STRATEGY.md](TESTING_STRATEGY.md) 为当前验收规范。下表是目标设施，不能据此宣称 Vitest/Playwright/Mock 服务器已安装或已通过；真实 Tauri/WebView 与 Android 另需宿主验证。

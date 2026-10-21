@@ -1,8 +1,9 @@
 # 环境特性与平台差异
 
 > 用途：记录**本机与各目标平台**的实测特性，避免在脚本、CI、命令和文档中重复踩坑。
-> 维护者：xyyi0719 · 最后实测：2026-10-20
+> 维护者：xyyi0719 · 最后实测：2026-10-21
 > 原则：**只写实测过的**。未验证的写「未验证」，不写推测。
+> **本机手动设置的值（代理地址、凭据、密钥路径等）不写进本文档**，只写读取方法。
 
 ---
 
@@ -69,9 +70,25 @@
 
 ### 1.5 网络与代理（重要）
 
-**系统代理**：`10.119.163.237:7741`（HTTP 代理），登记在
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`。
-`ProxyEnable = 1`。
+**系统代理由维护者手动设置在 Windows 系统设置里，地址随网络环境变化，本文不写死具体地址。**
+用之前先读**当前值**：
+
+```bash
+# Git Bash / MSYS 下 /v 会被当成路径改写，用 //v 或 MSYS_NO_PATHCONV=1
+reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings' //v ProxyServer
+reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings' //v ProxyEnable
+reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings' //v ProxyOverride
+```
+
+| 注册表值 | 含义 |
+|---|---|
+| `ProxyEnable` | `1` = 代理开启，`0` = 关闭 |
+| `ProxyServer` | 当前代理 `host:port`（HTTP 代理） |
+| `ProxyOverride` | **绕过代理**的主机列表；本机实测含 `localhost`、`127.*`、`10.*`、`172.16.*`–`172.31.*`、`192.168.*`、`*.cn`、`*.local`、`*.cloud`、`<local>` → 内网地址与 `*.cn` 走直连 |
+
+**仓库级 `http.proxy` / `https.proxy` 同样是手动写的**：落在 `.git/config`，
+而 `.git/` 不被 git 跟踪，因此**不会随仓库分发**，换机器必须重设。
+查看当前值：`git config --local --get http.proxy`。
 
 **关键差异**：
 
@@ -82,27 +99,94 @@
 | `curl` | ❌ 不会 | 必须显式 `curl -x` |
 | Node `fetch` | ❌ 不会 | 需要显式代理 agent |
 
-→ **本仓库已设仓库级 `http.proxy` / `https.proxy`**，但**其他项目没有**。
+**DNS 劫持**：`github.com` 在本机解析到 **127.0.0.1**（企业网络策略），而 `api.github.com` 正常。
 
-**DNS 劫持**：`github.com` 在本机解析到 **127.0.0.1**（企业网络策略），
-而 `api.github.com` 正常。
+| 目标 | 直连 | 走代理 | 绕行方式 |
+|---|---|---|---|
+| `api.github.com` | ✅ 200 | ✅ 200 | — |
+| `github.com` | ❌ 解析到 127.0.0.1 | ✅ 200 | 走代理，或 `--resolve` 配实时 IP |
+| `github.com:22`（SSH） | ❌ 连接被拒 | — | 改用 **SSH over 443**：`ssh://git@ssh.github.com:443/...` |
+| `developers.google.com` | ❌ 连接超时 | — | 无法核实 Google 官方文档，相关结论须标注未核实 |
+| `crates.io` / `npm registry` | ✅ 可达 | — | 依赖版本可实时核对 |
 
-| 目标 | 状态 | 绕行方式 |
-|---|---|---|
-| `api.github.com` | ✅ 走代理可用 | — |
-| `github.com` | ❌ 解析到 127.0.0.1 | `curl --resolve github.com:443:140.82.114.3`（已验证 140.82.114.3 / 140.82.112.3 / 20.205.243.166 可达） |
-| `github.com:22`（SSH） | ❌ 连接被拒 | 改用 **SSH over 443**：`ssh://git@ssh.github.com:443/...` |
-| `github.com:443`（HTTPS） | ❌ 解析劫持 | 走 `api.github.com` 或 `--resolve` |
-| `developers.google.com` | ❌ 连接超时 | 无法核实 Google 官方文档，相关结论须标注未核实 |
-| `crates.io` / `npm registry` | ✅ 可达 | 依赖版本可实时核对 |
+**`--resolve` 用的 GitHub 公网 IP 会轮换，不要写死**。需要时经代理走 DoH 实时取：
 
-**SSH 密钥**：`~/.ssh/id_rsa_xyyi0719`（已登记 GitHub）、`~/.ssh/github_actions_anker`。
-`~/.ssh/config` 里的 `github-personal` 主机用的是 **22 端口**（在本机不通）。
+```bash
+PXY=$(reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings' //v ProxyServer \
+      | tr -d '\r' | sed -n 's/^.*REG_SZ[ ]\{1,\}\(.*\)$/\1/p')
+curl -sS -x "http://$PXY" -H 'accept: application/dns-json' \
+     'https://dns.google/resolve?name=github.com&type=A'
+```
+
+**SSH 密钥、`.ssh/config` 主机别名、`.git/config` 的 `core.sshCommand` 与 remote URL 都是本机手动配置，不入库。**
+本仓库 remote 走 **SSH over 443**（`ssh://git@ssh.github.com:443/...`），因为 22 端口在本机被拒。
 
 **已知限制**：`gh auth refresh` 需访问 `github.com`（被劫持），**无法自助扩权**。
 需要新 scope（如 `delete_repo`）时只能：
 1. 手动改 hosts（**本机无写权限**，EPERM）
 2. 用 `curl --resolve` 走设备流（已验证可行，但需人工在浏览器输入设备码）
+
+#### 1.5.1 连 GitHub 前先探明
+
+**每次要访问 GitHub（推送、拉取、调 API、开 PR）之前，先探明能不能连通，再执行操作。**
+本机 `github.com` 被 DNS 劫持，直连必失败，很容易误判成「没网」或「仓库不存在」。
+
+```bash
+# 1) 推送走的真实通道（SSH over 443）——最贴近 push 本身
+git ls-remote origin
+
+# 2) API 通道（gh 自动读系统代理）
+gh auth status
+gh api rate_limit --jq '.rate.remaining'
+
+# 3) HTTPS 通道（需显式 -x 走系统代理）
+PXY=$(reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings' //v ProxyServer \
+      | tr -d '\r' | sed -n 's/^.*REG_SZ[ ]\{1,\}\(.*\)$/\1/p')
+curl -sS -o /dev/null -w 'code=%{http_code}\n' -x "http://$PXY" https://api.github.com
+```
+
+判读：
+
+| 探针结果 | 结论 | 下一步 |
+|---|---|---|
+| `git ls-remote` 成功 | 推送通道可用 | 可以 `git push` |
+| `git ls-remote` 失败但 `gh api` 成功 | 仅 HTTPS / API 通道可用 | 检查 remote 是否为 SSH over 443 |
+| 全部失败 | 代理未开或网络不通 | 读注册表 `ProxyEnable` / `ProxyServer` 当前值 |
+| `curl` 报 `Unsupported proxy syntax` | 提取代理的管道写错了 | 核对 `PXY` 提取结果是否为空 |
+
+**本机到 GitHub 的连接是间歇性的（2026-10-21 实测）**：
+
+连续 5 次采样，同一批命令的结果在**成功与失败之间跳变**：
+
+| 探针 | 5 次中的成功次数 | 失败时的现象 |
+|---|---|---|
+| `git ls-remote origin` | 3/5 | `Connection reset by <ip> port 443` |
+| `gh api rate_limit` | **5/5** | — |
+| `curl -x <代理> https://api.github.com` | 1/5 | `schannel: failed to receive handshake` |
+
+→ **单次探针失败不等于断网**。先重试再下结论；`gh` 走 Go 运行时代理、最稳，
+`curl`（Windows schannel）过企业代理最容易 TLS 握手失败，**不要把它当唯一判据**。
+
+**探不通就不要 push**：连接失败时反复推送只会产生半截状态或让 CI 空跑。
+先按上表定位到具体通道，修好再推，并把实际探针输出当作证据记录。
+
+建议用带重试的探针（推送前跑一次，通过再推）：
+
+```bash
+#!/usr/bin/env bash
+# GitHub 连通性探针：推送前必跑。本机连接间歇性失败，必须重试。
+TRIES=3
+for i in $(seq 1 $TRIES); do
+  if git ls-remote origin >/dev/null 2>&1; then
+    echo "OK: 推送通道可用 (第 $i 次尝试)"; exit 0
+  fi
+  echo "尝试 $i/$TRIES 失败，2 秒后重试…"
+  sleep 2
+done
+echo "FAIL: 推送通道在 $TRIES 次尝试内均不可用，不要 push"; exit 1
+```
+
+> 2026-10-21 实测：该探针连续 3 轮全部通过（均在第 2 次尝试成功）。
 
 ### 1.6 文件系统
 
@@ -206,6 +290,7 @@ sandbox iframe + CSP + `srcdoc`。这些行为在 **WebKitGTK 上与 Chromium �
 - [ ] 用到的命令（`grep` / `sed -i` / `timeout`）在目标 shell 存在吗？
 - [ ] 引号能扛住外层 shell 再解释一层吗？复杂逻辑改用脚本文件
 - [ ] 需要访问的网络目标在**目标环境**可达吗（代理 / DNS / 端口）？
+- [ ] 要访问 GitHub 吗？**先探明连通性再操作**，别直接 push（见 §1.5.1）
 - [ ] 依赖的本地工具装了吗（`filter-repo` / JDK 17 / SDK）？
 - [ ] 文档相对路径的层级对吗（见 §1.7）？
 - [ ] 平台差异是否影响这条命令/这段代码（见 §2.3）？

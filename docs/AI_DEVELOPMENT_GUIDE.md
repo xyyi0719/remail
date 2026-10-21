@@ -40,6 +40,7 @@
 5. 运行受影响测试及静态检查；失败时保留证据，不绕过门槛。
 6. 核查数据丢失、重复发送、凭据泄漏、无界队列/内存与取消行为。
 7. 更新相关文档；交付实际结果与未验证项。没有测量样本不提供 AI 耗时倍率。
+8. 需要访问 GitHub（推送、拉取、调 API）时，**先探明连通性再操作**，探不通不推；保留探针输出作为证据（见 [ENVIRONMENT §1.5.1](ENVIRONMENT.md)）。
 
 ## 4. 可复用任务模板
 
@@ -98,6 +99,8 @@ FTS 必测：正文晚到、更新、删除、回滚、重建。
   复杂逻辑改用脚本文件而非单行命令。
 - **网络**：本机 `github.com` 被 DNS 劫持到 127.0.0.1、SSH 22 端口被拒；
   `gh` 会自动读系统代理，`git`/`curl` 不会。需要时用 `api.github.com`、SSH over 443 或 `--resolve`。
+  代理地址是本机手动设置、随网络变化，**不写死在文档或脚本里**，用前读注册表当前值。
+  **访问 GitHub 前先探明连通性**（`git ls-remote origin` / `gh auth status`），探不通不推。
 - **注释里的文档路径**：相对源文件目录算层级，`crates/xremail-core/src/` 是 3 层，`apps/shell/src-tauri/src/` 是 4 层。
 - **平台差异**：Windows/Android 是 Chromium 系，Linux/macOS 是 WebKit 系；
   沙箱 iframe、CSP、`srcdoc` 的行为不能跨引擎推断。
