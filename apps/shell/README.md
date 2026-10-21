@@ -1,4 +1,4 @@
-# ReMail · 应用外壳
+# Xremail · 应用外壳
 
 Tauri 2 + React 19 + TypeScript 的前端与 Rust 外壳。**桌面与移动共用这一份工程**。
 

@@ -21,10 +21,15 @@
 - 风险登记册 `docs/ISSUES_AND_RISKS.md`：MECE 分类、纠错记录、关闭条件
 - 架构决策记录：ADR-0001（UI 技术栈）、ADR-0002（同步深度）、ADR-0003（Gmail OAuth，暂缓）
 - Tauri 2 + React 19 + TypeScript 工程脚手架（`apps/shell`）
-- `remail-core` crate：领域模型（账户、文件夹、邮件、Flags、地址、事件）
-- `remail-core` 错误分类单测 4 个
+- `xremail-core` crate：领域模型（账户、文件夹、邮件、Flags、地址、事件）
+- `xremail-core` 错误分类单测 4 个
 
 ### Changed
+- **项目改名：ReMail → Xremail**
+  - 展示名 `Xremail`；crate / npm 包名 `xremail-core` / `xremail-shell`；Tauri identifier `com.xremail.app`
+  - 原因：`remail` 在 crates.io（Rust 邮件服务器 v0.0.1）与 npm（React 邮件组件框架 v2.1.0）均已被占用；`xremail` 三个注册表均可用，GitHub 无同名仓库
+  - 目录 `crates/remail-core/` → `crates/xremail-core/`；根 Cargo.toml 的 workspace 依赖键同步改名
+  - 命名规范见 [CONTRIBUTING.md](docs/CONTRIBUTING.md)
 - `ProviderKind` 的沃邮箱变体重命名为 `Wo`（显示名「沃邮箱」），移除服务商名称中的厂商字样；序列化值同步变更
 - 文档与提交信息中不再出现厂商名称，仅保留产品名与域名
 - 架构语义重写：本地 SQLite 明确为读模型；服务器快照与本地操作意图分离；不承诺 exactly-once
@@ -36,7 +41,7 @@
 
 ### Fixed
 - `AppError` 的 `ctx()` 不再把错误统一折叠成 `Other`，保留 `is_retryable()` / `requires_user_action()` 判定
-- 代码注释中的文档相对路径断链（`crates/remail-core/src/*.rs`、`apps/shell/src-tauri/src/*.rs`）
+- 代码注释中的文档相对路径断链（`crates/xremail-core/src/*.rs`、`apps/shell/src-tauri/src/*.rs`）
 - 代码注释中过期的 `ARCHITECTURE §N` 章节号引用
 - workspace `resolver` 由 `2` 改为 `3`（edition 2024 隐含 MSRV 感知解析），Cargo.lock 无变化
 

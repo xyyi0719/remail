@@ -9,29 +9,29 @@
 1. Rust 是持久化写入入口；UI 发送命令并读取 DTO，不直接操作数据库或协议。
 2. SQLite 是**本机读模型**，不是服务器邮件状态的全局权威；服务器是 L1 邮件/flag 的权威，SQLite 还保存本地意图与待发送操作。
 3. 离线只能读取已缓存内容；未下载正文/附件不可用。离线操作排队，不承诺已送达。
-4. `remail-core` 不依赖存储/网络/UI；称为“依赖方向受控”，不使用“无依赖倒置”这一含混说法。
-5. `remail-sync` 初期明确是 **IMAP-aware** 的编排层。UIDVALIDITY、UID、MODSEQ 属于 IMAP 语义，不伪装成通用传输能力；JMAP 将另行设计适配。
+4. `xremail-core` 不依赖存储/网络/UI；称为“依赖方向受控”，不使用“无依赖倒置”这一含混说法。
+5. `xremail-sync` 初期明确是 **IMAP-aware** 的编排层。UIDVALIDITY、UID、MODSEQ 属于 IMAP 语义，不伪装成通用传输能力；JMAP 将另行设计适配。
 6. 状态提交后才发事件；事件是刷新提示，SQLite 查询是可恢复事实。UI 重连/漏事件后重新查询。
 7. 凭据、HTML 邮件及附件默认不可信；安全边界见 SECURITY，不通过失败降级削弱。
 8. 先保证数据正确与失败可恢复，再做性能和跨平台扩展；所有容量与连接上限均需测量。
 
 ## 2. 模块与依赖
 
-当前只有 `remail-core` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前只有 `xremail-core` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|
-| remail-core | 领域模型、错误、事件、身份/操作类型 | 不依赖 sqlx/tokio/tauri |
-| remail-api | 应用服务 DTO、L2 最小契约 | 不实现网络；不强迫其他模块反向依赖 UI |
-| remail-store | SQLite、迁移、事务、检索投影、操作队列 | 不发网络请求 |
-| remail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试 |
-| remail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once |
-| remail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/core，不认识 Tauri |
-| remail-message | MIME/charset、构建、HTML 清洗 | 不直接落库或加载远程资源 |
-| remail-provider | 可覆盖预设、接入诊断 | 企业邮箱需管理员配置，不能按品牌猜服务器 |
-| remail-crypto | 成熟密码库封装、版本化密文格式 | 不自行实现密码算法；不承担所有平台钥匙串职责 |
+| xremail-core | 领域模型、错误、事件、身份/操作类型 | 不依赖 sqlx/tokio/tauri |
+| xremail-api | 应用服务 DTO、L2 最小契约 | 不实现网络；不强迫其他模块反向依赖 UI |
+| xremail-store | SQLite、迁移、事务、检索投影、操作队列 | 不发网络请求 |
+| xremail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试 |
+| xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once |
+| xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/core，不认识 Tauri |
+| xremail-message | MIME/charset、构建、HTML 清洗 | 不直接落库或加载远程资源 |
+| xremail-provider | 可覆盖预设、接入诊断 | 企业邮箱需管理员配置，不能按品牌猜服务器 |
+| xremail-crypto | 成熟密码库封装、版本化密文格式 | 不自行实现密码算法；不承担所有平台钥匙串职责 |
 | 平台 SecretStore 适配器 | Windows/Android 等安全存储 | 与可选远端 VaultStore 分离 |
-| remail-testkit | 假服务器、合成样本、故障注入 | 测试专用 |
+| xremail-testkit | 假服务器、合成样本、故障注入 | 测试专用 |
 | shell | 组合根、Command/Event、窗口/平台生命周期 | Command 薄封装，业务在服务层 |
 
 依赖基线：`shell → 应用服务/编排 → store、protocol、message、provider → core`。
@@ -128,7 +128,7 @@ Windows 先打通完整链路，Android 保留目标并尽早做小型生命周�
 Linux/macOS/iOS 不属于当前验收平台，不因 Tauri 支持就视为产品可用。
 
 错误按可恢复原因分类：传输临时失败退避；认证需用户动作；磁盘满/迁移失败不能当普通 Storage 错误无限重试；协议错误不原样输出可能含凭据/正文的响应。
-事件枚举以 `remail-core/src/event.rs` 为准，flag 更新使用 MessageUpserted，当前没有 FlagsChanged。
+事件枚举以 `xremail-core/src/event.rs` 为准，flag 更新使用 MessageUpserted，当前没有 FlagsChanged。
 
 错误附加上下文时必须保留错误变体，否则 `is_retryable()` / `requires_user_action()` 判定失效。
 `AppError::with_context` 按变体逐个包裹，`Context::ctx` 基于它实现，已有单测锁定该行为。

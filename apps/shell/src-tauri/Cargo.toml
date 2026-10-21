@@ -1,6 +1,6 @@
 [package]
-name = "remail-shell"
-description = "ReMail application shell (Tauri): desktop + mobile front end host."
+name = "xremail-shell"
+description = "Xremail application shell (Tauri): desktop + mobile front end host."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,7 @@ authors.workspace = true
 [lib]
 # The `_lib` suffix keeps the lib name unique and avoids clashing with the
 # binary name on Windows (cargo#8519).
-name = "remail_shell_lib"
+name = "xremail_shell_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -23,7 +23,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 
-remail-core = { workspace = true }
+xremail-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

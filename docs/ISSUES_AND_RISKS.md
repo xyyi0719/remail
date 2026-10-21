@@ -6,10 +6,10 @@
 
 ## 1. 事实、推断、待验证
 
-- **仓库事实**：workspace 目前只有 `remail-core` 与 Tauri shell；`list_accounts` 返回空列表；没有 SQLite 迁移、同步引擎或实际收发能力。
+- **仓库事实**：workspace 目前只有 `xremail-core` 与 Tauri shell；`list_accounts` 返回空列表；没有 SQLite 迁移、同步引擎或实际收发能力。
 - **规划**：其他 crate、测试设施、加密服务均不是已交付功能。
 - **外部未知**：国内服务商能力、并发连接限制、Android 后台行为，必须用注明环境的实测建立证据。
-- `cargo test` 成功但用例数极少（当前仅 `remail-core` 错误分类的 4 个用例），只证明测试命令可执行，不证明业务正确。扩写计划见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
+- `cargo test` 成功但用例数极少（当前仅 `xremail-core` 错误分类的 4 个用例），只证明测试命令可执行，不证明业务正确。扩写计划见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
 - 2026-10-20 复核：Rust 1.99.1 / Node 22.21.0 / 本机仅 JDK 8 且无 Android SDK → **Android 构建在本机暂不可行**（P4 需先装 JDK 17 + SDK/NDK）。
 
 ## 2. 对上一版审查的纠错
@@ -27,7 +27,7 @@
 | 文档示例可直接用于开发 | 旧 IMAP、SQL、XSS、keyring 示例未编译/验证，已撤下，不能作为实现基线 |
 | `AppError` 的 `ctx()` 只是附加文本 | 旧实现把错误统一折叠成 `Other`，**丢失了** `is_retryable()` / `requires_user_action()` 判定，与 §3 的重试契约矛盾。已改为按变体保留类别并补单测（见 §2 附记） |
 | `panic = "abort"` 无副作用 | 体积更小，但后台同步 task 的 panic 会终止整个进程；tokio 任务级 `catch_unwind` 在 abort 下无效（见 R13） |
-| CI 通过 = 项目健康 | CI 无任何业务测试；`cargo test` 只跑 `remail-core` 的 4 个错误分类用例 |
+| CI 通过 = 项目健康 | CI 无任何业务测试；`cargo test` 只跑 `xremail-core` 的 4 个错误分类用例 |
 
 ## 3. MECE 风险分类
 
@@ -68,6 +68,6 @@
 
 | 日期 | 范围 | 结论 |
 |---|---|---|
-| 2026-10-20 | 全部 17 个 Markdown、Rust 与前端代码、CI 配置 | 修正 `ctx()` 丢失错误分类、代码注释中的断链与过期章节号、workspace resolver、作者署名；新增 `remail-core` 4 个单测 |
+| 2026-10-20 | 全部 17 个 Markdown、Rust 与前端代码、CI 配置 | 修正 `ctx()` 丢失错误分类、代码注释中的断链与过期章节号、workspace resolver、作者署名；新增 `xremail-core` 4 个单测 |
 
 相关：[架构](ARCHITECTURE.md) · [路线图](ROADMAP.md) · [测试策略](TESTING_STRATEGY.md)

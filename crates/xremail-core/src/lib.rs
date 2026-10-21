@@ -1,4 +1,4 @@
-//! ReMail 领域模型。
+//! Xremail 领域模型。
 //!
 //! 本 crate 是整个 workspace 的公共底座，**不得**依赖任何存储、网络或 UI crate
 //! （不得出现 `sqlx` / `tokio` / `tauri` / `reqwest` 等引用）。

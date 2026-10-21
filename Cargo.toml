@@ -2,7 +2,7 @@
 # edition 2024 隐含 resolver 3（MSRV 感知的特性解析），显式写出避免旧默认值。
 resolver = "3"
 members = [
-    "crates/remail-core",
+    "crates/xremail-core",
     "apps/shell/src-tauri",
 ]
 
@@ -15,14 +15,14 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 authors = ["xyyi0719"]
-repository = "https://github.com/remail/remail"
+repository = "https://github.com/xyyi0719/xremail"
 
 # ---------------------------------------------------------------------------
 # 工作区共享依赖
 # 升级版本时只改这里一处。
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
-remail-core = { path = "crates/remail-core" }
+xremail-core = { path = "crates/xremail-core" }
 
 anyhow = "1"
 thiserror = "2"

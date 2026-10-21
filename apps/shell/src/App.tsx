@@ -25,7 +25,7 @@ function App() {
 
   return (
     <main className="app-shell">
-      <h1>ReMail</h1>
+      <h1>Xremail</h1>
       <p className="app-subtitle">多端多账号邮件客户端 · P0 骨架</p>
 
       {error && <p className="app-error">无法连接 Rust 后端：{error}</p>}

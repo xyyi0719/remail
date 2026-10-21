@@ -9,6 +9,6 @@ pub struct AppState {
     /// 数据目录（数据库、附件、日志的根目录）。
     ///
     /// P0 阶段先留空，P1 接入 `remail-store` 时按平台解析：
-    /// Windows → `%APPDATA%/ReMail`，Android → app 内部存储。
+    /// Windows → `%APPDATA%/Xremail`，Android → app 内部存储。
     pub data_dir: Option<std::path::PathBuf>,
 }

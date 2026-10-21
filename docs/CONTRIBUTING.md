@@ -26,15 +26,15 @@ cargo check --workspace
 
 | 路径 | 放什么 | 不放什么 |
 |---|---|---|
-| `crates/remail-core` | 领域模型、错误、事件 | 任何 `sqlx` / `tokio` / `tauri` 引用 |
-| `crates/remail-store` | SQL、迁移、DAO | 网络调用 |
-| `crates/remail-sync` | 同步状态机、调度、outbox | UI 相关的一切 |
-| `crates/remail-protocol-*` | 协议细节 | 数据库、业务规则 |
-| `crates/remail-api` | trait 与 DTO | 实现（实现放各领域 crate） |
+| `crates/xremail-core` | 领域模型、错误、事件 | 任何 `sqlx` / `tokio` / `tauri` 引用 |
+| `crates/xremail-store` | SQL、迁移、DAO | 网络调用 |
+| `crates/xremail-sync` | 同步状态机、调度、outbox | UI 相关的一切 |
+| `crates/xremail-protocol-*` | 协议细节 | 数据库、业务规则 |
+| `crates/xremail-api` | trait 与 DTO | 实现（实现放各领域 crate） |
 | `apps/shell/src-tauri` | Command、Event、平台集成 | 业务规则（应在 crate 里） |
 | `apps/shell/src` | React 组件、路由、样式 | 协议细节、SQL、凭据处理 |
 
-**依赖方向铁律**：`remail-core` ← 一切；`remail-api` ← 一切；UI → `remail-api`；`remail-sync` 不认识 UI。
+**依赖方向铁律**：`xremail-core` ← 一切；`xremail-api` ← 一切；UI → `xremail-api`；`xremail-sync` 不认识 UI。
 
 ---
 
@@ -56,7 +56,7 @@ cargo check --workspace
 - `strict: true`，禁止 `any`（实在不行用 `unknown` + 收窄）
 - 组件用函数式 + Hooks；**不写 class 组件**
 - 数据获取统一用 TanStack Query；UI 局部状态用 Zustand
-- **禁止在 React 里直接调 `invoke` 之外的方式取数据**；所有数据经 `remail-api` 的 Tauri Command
+- **禁止在 React 里直接调 `invoke` 之外的方式取数据**；所有数据经 `xremail-api` 的 Tauri Command
 - 样式用 Tailwind 原子类；组件样式用 `shadcn/ui` 变体
 - 列表一律虚拟化（TanStack Virtual）
 - 可访问性：交互元素必须有 `aria-label` 或可见文本
@@ -72,6 +72,22 @@ cargo check --workspace
 | DB 表 | `snake_case` 复数 | `message` / `outbox` |
 | 事件名 | `PascalCase` 变体 | `AppEvent::MessageUpserted` |
 | 迁移文件 | `NNNN_snake_case.sql` | `0001_init.sql` |
+
+---
+
+## 命名规范
+
+| 场景 | 写法 | 例子 |
+|---|---|---|
+| 展示名（UI / 窗口 / 网页标题 / 文档标题） | `Xremail` | `# Xremail` |
+| Rust crate | 全小写 | `xremail-core`、`xremail-store` |
+| npm 包 | 全小写 | `xremail-shell` |
+| Tauri identifier | 全小写反域名 | `com.xremail.app` |
+| 目录 | 全小写 | `crates/xremail-core/` |
+| GitHub 仓库 | 全小写 | `xyyi0719/xremail` |
+
+> Rust crate 名与 npm 包名**必须全小写**（crates.io / npm 规范），因此只有展示层用 `Xremail`。
+> Tauri identifier 决定应用在系统中的身份（注册表 / bundle id / 包名），**发布后不可更改**。
 
 ---
 
@@ -123,11 +139,11 @@ AI 工作流与审查模板见 [AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md
 | 层 | 工具 | 要求 |
 |---|---|---|
 | Rust 单元测试 | `cargo test` | 状态机转换、编解码、charset 嗅探、冲突仲裁必须有单测 |
-| Rust 集成测试 | `cargo test` + `remail-testkit` | Mock IMAP/SMTP 服务器跑通完整同步流程 |
+| Rust 集成测试 | `cargo test` + `xremail-testkit` | Mock IMAP/SMTP 服务器跑通完整同步流程 |
 | SQL 迁移 | `sqlx` | 迁移可前滚；破坏性变更需写 `docs/adr/` |
 | 前端单测 | Vitest + Testing Library | 关键组件与 hook |
 | 端到端 | Playwright | 账户添加 → 收信 → 阅读 → 已读回写 的主链路 |
-| 回归样本 | `crates/remail-testkit/src/samples/` | 各家真实邮件的**脱敏**样本（含 GBK 样本） |
+| 回归样本 | `crates/xremail-testkit/src/samples/` | 各家真实邮件的**脱敏**样本（含 GBK 样本） |
 | 性能 | 待建基准 | 见 [ARCHITECTURE §10](ARCHITECTURE.md)，先测基线再设阈值 |
 
 **门槛**：新增协议解析 / 状态机 / 冲突处理代码，必须同时带测试。
@@ -198,6 +214,6 @@ AI 工作流与审查模板见 [AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md
 - 邮箱授权码 / 密码 / OAuth token
 - `oauth/clients.json`（OAuth Client ID/Secret）
 - 真实邮箱地址（测试代码里用 `test@example.com`）
-- 真实邮件正文样本（**必须脱敏**后再进 `remail-testkit`）
+- 真实邮件正文样本（**必须脱敏**后再进 `xremail-testkit`）
 
 发现泄漏：**立即重置该凭据**，然后 `git filter-repo` 清理历史并通知所有克隆者。

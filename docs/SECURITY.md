@@ -56,7 +56,7 @@
 
 这是邮件客户端最大的攻击面。渲染路径必须严格按下述四层执行：
 
-### 第 1 层：Rust 侧清洗（`remail-message`）
+### 第 1 层：Rust 侧清洗（`xremail-message`）
 
 用 `ammonia` 清洗原始 HTML：
 
@@ -114,7 +114,7 @@
    ├─ Argon2id(salt = 服务端分配的 per-group salt, m=64MiB, t=3, p=1)
    │     └─ 32 字节主密钥  ← 只存在于内存，退出即销毁
    │
-   ├─ vault_key = HKDF(master_key, info="remail-vault-v1")
+   ├─ vault_key = HKDF(master_key, info="xremail-vault-v1")
    │
    └─ vault = XChaCha20-Poly1305(vault_key, nonce, plaintext)
          └─ plaintext = JSON{ accounts_meta, signatures, rules, labels,
@@ -182,7 +182,7 @@ cargo deny check          # licenses / bans / advisories
 
 ## 9. 漏洞报告
 
-请**不要**开公开 issue。发送邮件至 `security@remail.example`（占位，正式发布前替换），或使用 GitHub 私密漏洞报告。
+请**不要**开公开 issue。发送邮件至 `security@xremail.example`（占位，正式发布前替换），或使用 GitHub 私密漏洞报告。
 我们会在 72 小时内确认收到，14 天内给出修复或缓解方案。
 
 ---

@@ -118,7 +118,7 @@
 
 | 文件 | 正确层级 |
 |---|---|
-| `crates/remail-core/src/*.rs` | `../../../docs/X.md`（src → crate → crates → 根） |
+| `crates/xremail-core/src/*.rs` | `../../../docs/X.md`（src → crate → crates → 根） |
 | `apps/shell/src-tauri/src/*.rs` | `../../../../docs/X.md`（src → src-tauri → shell → apps → 根） |
 
 > 曾在 4 个文件里全部写成少一层，被 CI 的 doc-comment 检查抓出。

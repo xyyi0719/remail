@@ -23,9 +23,9 @@
 
 ## 2. 当前仓库事实
 
-- [x] Git 仓库、Tauri/React 脚手架、Cargo workspace、remail-core。
+- [x] Git 仓库、Tauri/React 脚手架、Cargo workspace、xremail-core。
 - [x] 文档与 CI workflow 文件；测试策略/AI 工作规范已定义。
-- [x] `remail-core` 错误分类单测 4 个（2026-10-20）。
+- [x] `xremail-core` 错误分类单测 4 个（2026-10-20）。
 - [ ] 实际 SQLite、真实账户列表、协议适配、收发链路。
 - [ ] 自动化业务测试与真实邮箱/Android 验收证据。
 
@@ -35,8 +35,8 @@
 
 ### P0：可测试的最小地基
 
-- [ ] remail-store：迁移、账户/文件夹 DAO、事务与身份约束。
-- [ ] remail-api：SecretStore、VaultStore、SyncBackend 最小契约与可运行 mock；CAS 冲突测试。
+- [ ] xremail-store：迁移、账户/文件夹 DAO、事务与身份约束。
+- [ ] xremail-api：SecretStore、VaultStore、SyncBackend 最小契约与可运行 mock；CAS 冲突测试。
 - [ ] L2 schema 预留（local_secret 仅版本化密文、label/rule 等）与最小密码封装测试；不是凭据明文落库。
 - [ ] Command → 服务 → SQLite → React 真实列表，不以硬编码空列表验收。
 - [ ] 新库/升级/回滚测试；实际执行 fmt/clippy/test/typecheck/build。

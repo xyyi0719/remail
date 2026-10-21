@@ -1,4 +1,4 @@
-//! Domain model for ReMail.
+//! Domain model for Xremail.
 //!
 //! This crate is intentionally dependency-light: it must not depend on any
 //! storage, network or UI crate, so that every other crate in the workspace

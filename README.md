@@ -1,4 +1,4 @@
-# ReMail
+# Xremail
 
 **多端、多账号、隐私优先的邮件客户端。** 核心用 Rust 写，界面用 Web 技术，Windows / Android 优先，iOS / macOS / Linux 随后。
 > 维护者：xyyi0719
@@ -42,10 +42,10 @@
 │  src-tauri (Rust)                 托盘 / Android 前台服务   │
 ├────────────────────────────────────────────────────────┤
 │  crates/                          全部业务逻辑在 Rust 侧    │
-│  remail-core       领域模型       remail-sync   同步引擎    │
-│  remail-store     SQLite + FTS   remail-crypto 加密/密钥派生│
-│  remail-protocol-* IMAP/SMTP/OAuth                     │
-│  remail-api       领域服务接口    remail-provider 厂商预设  │
+│  xremail-core       领域模型       xremail-sync   同步引擎    │
+│  xremail-store     SQLite + FTS   xremail-crypto 加密/密钥派生│
+│  xremail-protocol-* IMAP/SMTP/OAuth                     │
+│  xremail-api       领域服务接口    xremail-provider 厂商预设  │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -77,7 +77,7 @@
 ## 目录结构
 
 ```
-remail/
+xremail/
 ├─ crates/                 Rust 库：core / store / crypto / api / provider / protocol-*
 ├─ apps/
 │  ├─ shell/               Tauri 应用（桌面 + 移动）

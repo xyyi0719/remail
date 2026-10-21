@@ -98,7 +98,7 @@ FTS 必测：正文晚到、更新、删除、回滚、重建。
   复杂逻辑改用脚本文件而非单行命令。
 - **网络**：本机 `github.com` 被 DNS 劫持到 127.0.0.1、SSH 22 端口被拒；
   `gh` 会自动读系统代理，`git`/`curl` 不会。需要时用 `api.github.com`、SSH over 443 或 `--resolve`。
-- **注释里的文档路径**：相对源文件目录算层级，`crates/remail-core/src/` 是 3 层，`apps/shell/src-tauri/src/` 是 4 层。
+- **注释里的文档路径**：相对源文件目录算层级，`crates/xremail-core/src/` 是 3 层，`apps/shell/src-tauri/src/` 是 4 层。
 - **平台差异**：Windows/Android 是 Chromium 系，Linux/macOS 是 WebKit 系；
   沙箱 iframe、CSP、`srcdoc` 的行为不能跨引擎推断。
 

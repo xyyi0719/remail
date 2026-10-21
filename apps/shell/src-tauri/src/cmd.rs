@@ -5,8 +5,8 @@
 //! * 不写业务逻辑（业务逻辑属于 `crates/`）；
 //! * 需要跨线程的活，投递给对应 Actor 的 mailbox。
 
-use remail_core::Account;
 use serde::Serialize;
+use xremail_core::Account;
 
 /// 应用基本信息，供前端做环境探测与"关于"页。
 #[derive(Debug, Serialize)]
@@ -26,7 +26,7 @@ pub struct AppInfo {
 #[tauri::command]
 pub fn app_info() -> AppInfo {
     AppInfo {
-        name: "ReMail",
+        name: "Xremail",
         version: env!("CARGO_PKG_VERSION"),
         platform: std::env::consts::OS,
         data_dir: None,

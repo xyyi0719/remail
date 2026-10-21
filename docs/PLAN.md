@@ -1,4 +1,4 @@
-# ReMail — 多端多账号邮件客户端 · 详细技术规划
+# Xremail — 多端多账号邮件客户端 · 详细技术规划
 
 > 版本 v1.2 · Rust + Tauri 2 + React/TS；Windows/Android 为目标平台。
 > **本文件保留原始方案供参考，不再是当前执行基线。** 当前范围与门槛以 [ROADMAP](ROADMAP.md) 为准，技术语义以 [ARCHITECTURE](ARCHITECTURE.md)、安全以 [SECURITY](SECURITY.md)、验证以 [TESTING_STRATEGY](TESTING_STRATEGY.md) 为准。
@@ -13,7 +13,7 @@
 | # | 议题 | 决策 | 影响 |
 |---|---|---|---|
 | D1 | UI 技术栈 | **Tauri 2 + React 19 + TypeScript**（Vite / Tailwind 4 / shadcn-ui / TanStack Virtual+Query+Router / TipTap） | 单一 workspace 覆盖 Win/Android/iOS/macOS/Linux；Rust 承担全部协议与存储，前端纯渲染 |
-| D2 | 跨端同步深度 | **先做 L1（IMAP 原生），L2 在 P0 即落地抽象接口与 schema 预留**（`remail-api` trait + `local_secret`/`label`/`rule` 表），P6 再补自建服务端，**不返工** | MVP 无服务端依赖；多端状态同步开箱即用；增值能力路径已留好 |
+| D2 | 跨端同步深度 | **先做 L1（IMAP 原生），L2 在 P0 即落地抽象接口与 schema 预留**（`xremail-api` trait + `local_secret`/`label`/`rule` 表），P6 再补自建服务端，**不返工** | MVP 无服务端依赖；多端状态同步开箱即用；增值能力路径已留好 |
 | D3 | Gmail 接入 | **走正式 OAuth 2.0 验证流程**（Device Code + XOAUTH2），第 1 周即启动 Google Cloud 项目与验证；同时保留「应用专用密码」作为开发期兜底 | P1 关键路径最长的一项，必须最早启动；国内三家先行交付 |
 | D4 | 前端形态 | **不用 Electron / Flutter / Slint** | — |
 | D5 | 邮件渲染 | **sandbox iframe（无 allow-scripts）+ Rust 侧 ammonia 清洗 + 严格 CSP** | 必须在 P2 之前实现安全渲染组件，不可延期 |
@@ -74,7 +74,7 @@
 | **126** | `imap.126.com:993` | `smtp.126.com:465` | 同上 | 与 163 同体系 |
 | **网易企业邮** | `imap.qiye.163.com:993`（华东）/ 华北节点域名不同 | `smtp.qiye.163.com:465/994/587` | 授权码 | **华东/华北/华南节点服务器域名不同**，必须支持自定义域名 |
 | **QQ** | `imap.qq.com:993` | `smtp.qq.com:465` | 16 位**授权码** | 设置 → 账号与安全 → 安全设置 → 开启 IMAP/SMTP；**改 QQ 密码会让已发授权码全部失效** |
-| **沃邮箱** | `imap.wo.cn:993`（Coremail 体系） | `smtp.wo.cn:465` | 授权码 | ⚠️ **需实测确认**；Coremail 系（`tz.mail.wo.cn/coremail`）近期已改为「客户端必须用授权码，不能用原密码」 |
+| **沃邮箱** | `imap.wo.cn:993`（Coxremail 体系） | `smtp.wo.cn:465` | 授权码 | ⚠️ **需实测确认**；Coxremail 系（`tz.mail.wo.cn/coxremail`）近期已改为「客户端必须用授权码，不能用原密码」 |
 | **Gmail** | `imap.gmail.com:993` | `smtp.gmail.com:465` | **OAuth2 XOAUTH2**（或应用专用密码） | 见下 |
 | **Exchange/O365** | `outlook.office365.com:993` | `smtp.office365.com:587` | OAuth2 / 客户端 ID+密钥 | Basic Auth 已被微软禁用 |
 
@@ -126,7 +126,7 @@
 **L2/L3 需要一个自建同步服务**，我设计为**可选组件**：
 
 ```
-remail-sync-server (Rust + axum + SQLite/Postgres)
+xremail-sync-server (Rust + axum + SQLite/Postgres)
 ├── 端点: PUT/GET /vault/:device_group  (加密 blob, 带 revision + HLC)
 ├── 认证: 用户自建口令 → Argon2id → Bearer token
 ├── 加密: 客户端端到端（服务端零知识）
@@ -264,17 +264,17 @@ HTML 邮件     自研 <SafeEmailFrame> 组件 (sandbox iframe + ammonia 清洗)
                 │
 ┌───────────────┴─────────────────────────────────────────────┐
 │  crates/                                                   │
-│  ├─ remail-core        领域模型、错误、Provider trait、事件定义 │
-│  ├─ remail-sync        同步引擎：AccountActor / FolderActor   │
+│  ├─ xremail-core        领域模型、错误、Provider trait、事件定义 │
+│  ├─ xremail-sync        同步引擎：AccountActor / FolderActor   │
 │  │                     IDLE / CONDSTORE / 重试 / 调度         │
-│  ├─ remail-protocol-imap   IMAP 客户端封装 (async-imap)      │
-│  ├─ remail-protocol-smtp   SMTP 发送 (lettre)                │
-│  ├─ remail-protocol-oauth  OAuth2 / XOAUTH2 / Device Code    │
-│  ├─ remail-store       SQLite (sqlx) schema + DAO + FTS5     │
-│  ├─ remail-crypto      密钥派生、字段加密、vault 封装          │
-│  ├─ remail-provider    各家预设、服务器自动探测、连接诊断      │
-│  ├─ remail-message     MIME 解析/构建、附件、字符集、净化      │
-│  └─ remail-api         领域服务接口（供 UI 与未来 HTTP 复用）  │
+│  ├─ xremail-protocol-imap   IMAP 客户端封装 (async-imap)      │
+│  ├─ xremail-protocol-smtp   SMTP 发送 (lettre)                │
+│  ├─ xremail-protocol-oauth  OAuth2 / XOAUTH2 / Device Code    │
+│  ├─ xremail-store       SQLite (sqlx) schema + DAO + FTS5     │
+│  ├─ xremail-crypto      密钥派生、字段加密、vault 封装          │
+│  ├─ xremail-provider    各家预设、服务器自动探测、连接诊断      │
+│  ├─ xremail-message     MIME 解析/构建、附件、字符集、净化      │
+│  └─ xremail-api         领域服务接口（供 UI 与未来 HTTP 复用）  │
 └───────────────▲─────────────────────────────────────────────┘
                 │ (可选)
 ┌───────────────┴─────────────────────────────────────────────┐
@@ -285,7 +285,7 @@ HTML 邮件     自研 <SafeEmailFrame> 组件 (sandbox iframe + ammonia 清洗)
 ### 4.2 关键设计原则
 
 1. **前端无状态权威**。UI 永远从 SQLite 读；Rust 侧是唯一写入者，通过事件推增量。前端不做本地乐观写（或乐观写后由 Rust 事件校正）。
-2. **协议无关**。`remail-sync` 只认 `MailStore` trait，不认 IMAP。以后接 JMAP/Exchange 时 sync 引擎不动。
+2. **协议无关**。`xremail-sync` 只认 `MailStore` trait，不认 IMAP。以后接 JMAP/Exchange 时 sync 引擎不动。
 3. **每账户一个 Actor**。一个 tokio task 独占该账户的 IMAP 连接与状态机，串行处理该账户的所有命令；账户之间并行。避免多连接被服务器踢。
 4. **单写者 + WAL**。SQLite 开启 WAL 模式；所有 flag 写操作先落 `outbox` 表再由 Actor 推送到服务器，失败重试。可断电续传。
 5. **凭据永不入库明文**。授权码存 OS 钥匙串（`keyring` crate → Windows 凭据管理器 / Android Keystore）；OAuth refresh token 走 `keyring`；若要做跨端，则用主密码加密后存 sync-server。
@@ -523,7 +523,7 @@ CREATE TABLE local_secret (id TEXT PRIMARY KEY, ciphertext BLOB, nonce BLOB, upd
 | 文件夹并发 | 单账户内串行（同一连接） |
 | 批量拉取 | 每批 ≤ 500 个 UID，避免单次响应过大 |
 | 抓正文并发 | 同一连接不支持并发，串行；必要时开第二条连接仅用于正文/附件下载（注意连接数限制） |
-| 大附件 | 流式落盘（`content-addressed` 目录 `~/.local/share/remail/blobs/<sha256前2>/<sha256>`） |
+| 大附件 | 流式落盘（`content-addressed` 目录 `~/.local/share/xremail/blobs/<sha256前2>/<sha256>`） |
 | 内存上限 | 单封邮件解析上限 50MB；HTML 渲染只保留前 N KB |
 
 ---
@@ -581,19 +581,19 @@ CREATE TABLE local_secret (id TEXT PRIMARY KEY, ciphertext BLOB, nonce BLOB, upd
 - [ ] Cargo workspace 骨架（§4.1 目录结构）
 - [ ] `tauri init` + React/TS + Vite + Tailwind + shadcn 接入
 - [ ] CI：GitHub Actions（Windows + Ubuntu）→ fmt / clippy / test / tauri build
-- [ ] `remail-core`：领域模型、错误类型、事件定义
-- [ ] `remail-store`：schema + sqlx 迁移 + 基本 DAO
-- [ ] **（D2）落地 L2 预留**：`remail-api` 抽象 trait（`SyncBackend` / `VaultStore` 接口）+ `local_secret`/`label`/`rule` 表 + `remail-crypto` 的 KDF/密文封装（P6 直接接自建服务，无需改核心）
+- [ ] `xremail-core`：领域模型、错误类型、事件定义
+- [ ] `xremail-store`：schema + sqlx 迁移 + 基本 DAO
+- [ ] **（D2）落地 L2 预留**：`xremail-api` 抽象 trait（`SyncBackend` / `VaultStore` 接口）+ `local_secret`/`label`/`rule` 表 + `xremail-crypto` 的 KDF/密文封装（P6 直接接自建服务，无需改核心）
 - [ ] **（D3）启动 Google Cloud 项目与 OAuth 验证提交**
 - [ ] 打通链路：Tauri Command `list_folders` → SQLite → 前端空列表渲染
 
 **出口标准**：`cargo tauri dev` 能跑，前端显示真实 SQLite 里的空账户列表；且 L2 抽象接口已就位。
 
 ### P1 — 账户接入与收信（2.5 周）⚠️ 关键路径
-- [ ] `remail-provider`：163/126/QQ/沃邮箱/Gmail/Exchange 预设 + 自动探测
-- [ ] `remail-protocol-imap`：连接、认证（LOGIN/PLAIN/XOAUTH2）、CAPABILITY、LIST、SELECT
-- [ ] `remail-protocol-oauth`：Device Code 流程 + XOAUTH2 字符串构造 + token 刷新
-- [ ] `remail-message`：MIME 解析（正文、附件、字符集转换 GBK/GB18030 ← 国内邮箱常见坑）
+- [ ] `xremail-provider`：163/126/QQ/沃邮箱/Gmail/Exchange 预设 + 自动探测
+- [ ] `xremail-protocol-imap`：连接、认证（LOGIN/PLAIN/XOAUTH2）、CAPABILITY、LIST、SELECT
+- [ ] `xremail-protocol-oauth`：Device Code 流程 + XOAUTH2 字符串构造 + token 刷新
+- [ ] `xremail-message`：MIME 解析（正文、附件、字符集转换 GBK/GB18030 ← 国内邮箱常见坑）
 - [ ] 账户增删改 UI + 「连接诊断」页（逐项测试 IMAP/SMTP/认证，输出可读错误）
 - [ ] 首轮全量同步：文件夹树 + 邮件列表（虚拟滚动）+ 邮件头
 - [ ] **⚡ 并行启动：注册 Google Cloud 项目、申请 OAuth 客户端、走验证流程**
@@ -613,7 +613,7 @@ CREATE TABLE local_secret (id TEXT PRIMARY KEY, ciphertext BLOB, nonce BLOB, upd
 **出口标准**：双端同时登录，一端标记已读/移动，另一端 30 秒内可见。
 
 ### P3 — 发信与草稿（1.5 周）
-- [ ] `remail-protocol-smtp` 接入 + 多发件人 From 选择
+- [ ] `xremail-protocol-smtp` 接入 + 多发件人 From 选择
 - [ ] 写邮件 UI（TipTap 富文本 + 纯文本模式切换）
 - [ ] 草稿自动保存（本地）+ 草稿同步
 - [ ] 附件上传（多文件、拖拽、粘贴图片）
@@ -658,31 +658,31 @@ CREATE TABLE local_secret (id TEXT PRIMARY KEY, ciphertext BLOB, nonce BLOB, upd
 ## 10. 目录结构
 
 ```
-remail/
+xremail/
 ├─ Cargo.toml                      # workspace
 ├─ rust-toolchain.toml
 ├─ .env.example                    # OAUTH_CLIENT_ID 等
 ├─ crates/
-│  ├─ remail-core/
+│  ├─ xremail-core/
 │  │  ├─ src/{model.rs, error.rs, event.rs, provider.rs, lib.rs}
-│  ├─ remail-protocol-imap/
+│  ├─ xremail-protocol-imap/
 │  │  ├─ src/{client.rs, session.rs, fetch.rs, idle.rs, commands.rs}
-│  ├─ remail-protocol-smtp/
-│  ├─ remail-protocol-oauth/
+│  ├─ xremail-protocol-smtp/
+│  ├─ xremail-protocol-oauth/
 │  │  ├─ src/{google.rs, xoauth2.rs, device_code.rs}
-│  ├─ remail-message/
+│  ├─ xremail-message/
 │  │  ├─ src/{parse.rs, build.rs, charset.rs, sanitize.rs}
-│  ├─ remail-store/
+│  ├─ xremail-store/
 │  │  ├─ migrations/*.sql
 │  │  ├─ src/{db.rs, account.rs, folder.rs, message.rs, outbox.rs, fts.rs}
-│  ├─ remail-sync/
+│  ├─ xremail-sync/
 │  │  ├─ src/{actor.rs, machine.rs, scheduler.rs, outbox_worker.rs, idler.rs}
-│  ├─ remail-provider/
+│  ├─ xremail-provider/
 │  │  ├─ src/{preset.rs, autodiscover.rs, diagnose.rs}
-│  ├─ remail-crypto/
+│  ├─ xremail-crypto/
 │  │  ├─ src/{kdf.rs, secret.rs, vault.rs}
-│  ├─ remail-api/                 # 领域服务 trait（UI 与未来 HTTP 共用）
-│  └─ remail-testkit/             # mock IMAP/SMTP server（测试用）
+│  ├─ xremail-api/                 # 领域服务 trait（UI 与未来 HTTP 共用）
+│  └─ xremail-testkit/             # mock IMAP/SMTP server（测试用）
 ├─ apps/
 │  ├─ shell/
 │  │  ├─ src-tauri/
@@ -733,12 +733,12 @@ remail/
 
 **Day 2–3**
 - [ ] 把验证结果写进 `docs/PROTOCOLS.md`（各家的真实服务器、IDLE 支持、字符集、连接数限制）
-- [ ] 搭 `remail-store` schema + sqlx 迁移
+- [ ] 搭 `xremail-store` schema + sqlx 迁移
 - [ ] Tauri 脚手架 + 前端路由骨架
 
 **Day 4–5**
-- [ ] `remail-protocol-imap` 最小可用：连接 → 认证 → 选 INBOX → FETCH 列表
-- [ ] 写 mock IMAP server（`remail-testkit`）用于后续单测
+- [ ] `xremail-protocol-imap` 最小可用：连接 → 认证 → 选 INBOX → FETCH 列表
+- [ ] 写 mock IMAP server（`xremail-testkit`）用于后续单测
 
 **Day 6–7**
 - [ ] 账户管理 UI + 连接诊断

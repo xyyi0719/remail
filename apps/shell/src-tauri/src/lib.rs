@@ -1,4 +1,4 @@
-//! ReMail 应用外壳（Tauri）。
+//! Xremail 应用外壳（Tauri）。
 //!
 //! 职责边界（见 [ARCHITECTURE §9](../../../../docs/ARCHITECTURE.md)）：
 //! * Command 只做 **参数校验 → 调用领域服务 → 返回 DTO**，不写业务逻辑。
@@ -32,12 +32,12 @@ pub fn run() {
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![cmd::app_info, cmd::list_accounts])
         .run(tauri::generate_context!())
-        .expect("error while running ReMail application");
+        .expect("error while running Xremail application");
 }
 
 /// 初始化结构化日志。
 ///
-/// 默认级别 `info`；可用 `RUST_LOG=remail_shell=debug,remail_core=debug` 覆盖。
+/// 默认级别 `info`；可用 `RUST_LOG=xremail_shell=debug,xremail_core=debug` 覆盖。
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
 

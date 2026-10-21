@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ReMail",
+  "productName": "Xremail",
   "version": "0.1.0",
-  "identifier": "com.remail.app",
+  "identifier": "com.xremail.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ReMail",
+        "title": "Xremail",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
@@ -32,7 +32,7 @@
     "targets": "all",
     "category": "Productivity",
     "shortDescription": "多端多账号邮件客户端",
-    "longDescription": "ReMail 是一个多端、多账号的邮件客户端，支持 163、QQ、沃邮箱、Gmail 与标准 IMAP/SMTP 邮箱，核心以 Rust 实现。",
+    "longDescription": "Xremail 是一个多端、多账号的邮件客户端，支持 163、QQ、沃邮箱、Gmail 与标准 IMAP/SMTP 邮箱，核心以 Rust 实现。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
