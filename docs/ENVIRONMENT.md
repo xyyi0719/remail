@@ -191,6 +191,25 @@ curl -sS -o /dev/null -w 'code=%{http_code}\n' -x "http://$PXY" https://api.gith
 **探针与 push 必须放在同一个重试循环里**：探针通过之后，`push` 自身仍可能在传输中被 reset。
 2026-10-21 的一次真实推送，探针在前 3 次全失败、**第 4 次**才通过 —— `TRIES=3` 不够用。
 
+**判成功只看 `git push` 自己的退出码**（2026-10-21 实测踩坑）：
+
+- **不要给 `git push` 接管道**。`git push origin main 2>&1 | tail -3` 的退出码是 `tail` 的，
+  永远是 0 —— 循环会把失败读成成功，把成功读成失败（实测一次已成功推送被误报为失败并重试了 40 次）。
+  要保留输出就**重定向到文件**，别用管道。
+- **推送后用 `ls-remote` 核验，本身也会间歇性失败**。核验失败 **不等于** 没推上去；
+  以 `git push` 的退出码为准，核验要带重试。
+- 核验要**比对 SHA**，不要只看命令是否报错：
+
+```bash
+# 正确的核验：比对远端 main 与本地 HEAD
+for i in $(seq 1 8); do
+  RSHA=$(timeout 30 git ls-remote origin refs/heads/main 2>/dev/null | cut -f1)
+  [ -n "$RSHA" ] && break
+  sleep 3
+done
+[ "$RSHA" = "$(git rev-parse HEAD)" ] && echo "远端已同步" || echo "远端未同步"
+```
+
 建议用带重试的探针 + 推送脚本（推送前跑一次，通过即推）：
 
 ```bash
