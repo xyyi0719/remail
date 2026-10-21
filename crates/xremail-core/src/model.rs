@@ -14,22 +14,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
-    /// 163.com personal mailboxes.
+    /// 163 mailboxes (`@163.com`, personal).
     Netease163,
-    /// 126.com personal mailboxes.
+    /// 126 mailboxes (`@126.com`, personal).
     Netease126,
-    /// NetEase enterprise mail (Coremail-like, region specific hosts).
+    /// 网易企业邮 mailboxes (`@qiye.163.com`): Coremail-like, region-specific hosts.
     NeteaseEnterprise,
-    /// QQ Mail (Tencent).
+    /// QQ mailboxes (`@qq.com`).
     Tencent,
-    /// Wo Mail (Coremail).
+    /// 沃邮箱 mailboxes (`@wo.cn`): Coremail-based.
     Wo,
-    /// Gmail / Google Workspace.
+    /// Gmail / Workspace mailboxes.
     ///
     /// Workspace 账号自 2025-05-01 起禁用密码基础认证；个人账号在开启两步验证后
     /// 仍可用“应用专用密码”走基础认证。Gmail 当前暂缓接入，见 ADR-0003。
     Google,
-    /// Microsoft Exchange / Outlook 365.
+    /// Exchange / Outlook 365 mailboxes.
     Exchange,
     /// Anything else, configured manually.
     Generic,
@@ -62,7 +62,7 @@ impl ProviderKind {
 pub enum AuthKind {
     /// Password or provider-issued authorisation code (163/QQ/Wo).
     Password,
-    /// OAuth 2.0 with the `XOAUTH2` SASL mechanism (Google/Microsoft).
+    /// OAuth 2.0 with the `XOAUTH2` SASL mechanism (Gmail / Exchange).
     OAuth2,
 }
 

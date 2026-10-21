@@ -35,7 +35,7 @@ pub fn app_info() -> AppInfo {
 
 /// 列出已配置的账户。
 ///
-/// P0 阶段尚无持久化实现，返回空列表；P1 接入 `remail-store` 后改为真实查询。
+/// P0 阶段尚无持久化实现，返回空列表；P1 接入 `xremail-store` 后改为真实查询。
 #[tauri::command]
 pub async fn list_accounts() -> Result<Vec<Account>, String> {
     Ok(Vec::new())

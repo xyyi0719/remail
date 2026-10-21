@@ -2,7 +2,7 @@
 //!
 //! 职责边界（见 [ARCHITECTURE §9](../../../../docs/ARCHITECTURE.md)）：
 //! * Command 只做 **参数校验 → 调用领域服务 → 返回 DTO**，不写业务逻辑。
-//! * 跨线程的工作（IMAP 拉取、发信等）投递给 `remail-sync` 的 Actor。
+//! * 跨线程的工作（IMAP 拉取、发信等）投递给 `xremail-sync` 的 Actor。
 //! * 平台相关能力（托盘 / 通知 / 前台服务）收敛到 `platform` 模块。
 
 pub mod cmd;

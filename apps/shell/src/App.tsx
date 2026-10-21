@@ -44,7 +44,7 @@ function App() {
       )}
 
       <p className="app-note">
-        下一阶段：接入 <code>remail-store</code> 与 IMAP 协议层。
+        下一阶段：接入 <code>xremail-store</code> 与 IMAP 协议层。
       </p>
     </main>
   );
