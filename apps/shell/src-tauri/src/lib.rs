@@ -8,6 +8,8 @@
 pub mod cmd;
 pub mod state;
 
+// `Manager` 只在桌面端单实例插件的回调里用到；Android 侧不注册该插件。
+#[cfg(desktop)]
 use tauri::Manager;
 
 /// 应用入口。桌面与移动共用。
@@ -15,9 +17,13 @@ use tauri::Manager;
 pub fn run() {
     init_tracing();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    // 单实例与开机自启只有桌面端实现，这两个插件在 Android 上不提供 API。
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // 第二次启动时聚焦已有窗口，避免多开导致服务端连接数超限。
             if let Some(window) = app.get_webview_window("main") {
@@ -28,7 +34,9 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
-        ))
+        ));
+
+    builder
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![cmd::app_info, cmd::list_accounts])
         .run(tauri::generate_context!())
