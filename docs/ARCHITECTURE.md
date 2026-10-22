@@ -17,7 +17,7 @@
 
 ## 2. 模块与依赖
 
-当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|
@@ -74,6 +74,11 @@ RFC Message-ID 只能作线索，不能作为唯一键或自动跨文件夹去�
 禁止把旧操作直接套到新 UID；重新全量建立该文件夹快照。保留操作记录与冲突原因供恢复/提示，附件引用按回收策略处理，不能误删共享 blob。
 PLAN 已有 `sync_state.uidvalidity`，无需重复添加同义字段。
 
+**实现落点（2026-10-22，`crates/xremail-sync/src/epoch.rs`）**：`plan_epoch_transition` 把三种情形分开——
+epoch 未变（增量）、首次同步（全量拉取）、epoch 变了（**重建快照**）。
+重建时列出绑定旧 epoch 的待提交操作 ID（`quarantined`），**不**把它们套到新 UID 上。
+UIDVALIDITY 不得为 0（RFC 3501），收到 0 视为协议错误。
+
 **实现落点（2026-10-22，P0 迁移 `0001_init.sql`）**：epoch 与游标统一放在 `folder` 表
 （`uidvalidity` / `last_uid` / `highest_modseq` / `last_sync_at`），与 `xremail-core` 的
 `Folder` 结构一一对应，**不另建 `sync_state` 表**——那样会出现两处同义字段。
@@ -107,6 +112,14 @@ Message-ID、稳定操作 ID 有助于排查，但不能保证 SMTP 去重。明
 - 本地时间戳/HLC 不能排序普通 IMAP 客户端的远端操作；MODSEQ 也不是跨 mailbox 的全局时间。
 - 移动后原 UID 无效；删除/移动冲突应重新核对存在性，无法定位时失败或交给用户，不按时间戳猜测目标。
 - L2 自建同步未来可用显式版本/CAS；不能把它的 HLC/LWW 规则套进 IMAP。
+
+**实现落点（2026-10-22，`crates/xremail-sync/src/intent.rs`）**：`FlagIntent` 记录一个 bit 级意图
+（uid、**epoch**、add/remove、`seq` 顺序号、基线 MODSEQ）。`apply_intents` 按 `seq` 排序作用于快照，
+后者覆盖前者——`+Seen` 与 `-Seen` 的冲突就是这样定序的。
+`plan_flag_update` 只产出**净变化**的位：净变化为空时返回 `None`（不发命令），
+其余只含真正变化的位，**不整组替换 FLAGS**。绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算。
+服务器回 `MODIFIED` 后，客户端用新快照重调 `plan_flag_update` 即可重算，
+次数上限见 `MAX_REPLAN_ATTEMPTS`。
 
 ## 7. 检索模型
 

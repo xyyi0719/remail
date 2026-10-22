@@ -29,6 +29,7 @@
 - [x] `xremail-store`：迁移 + 账户/文件夹 DAO + 身份约束（2026-10-22）；T1 用例 30 个。
 - [x] `xremail-crypto`：argon2id + ChaCha20-Poly1305 版本化密文封装（2026-10-22）；T3 用例 40 个。
 - [x] `xremail-api`：SecretStore / VaultStore / SyncBackend 契约 + 内存 mock（2026-10-22）；T4 用例 25 个。
+- [x] `xremail-sync`：UID 差分 / epoch 切换 / bit 意图合并三个纯函数模块（2026-10-22）；T2 用例 57 个。
 - [ ] 实际 SQLite **接入应用**（`list_accounts` 仍返回硬编码空列表）、真实账户列表、协议适配、收发链路。
 - [ ] 自动化业务测试与真实邮箱/Android 验收证据。
 
@@ -53,10 +54,10 @@
 - [ ] Command → 服务 → SQLite → React 真实列表，不以硬编码空列表验收。
 - [x] 新库 / 迁移幂等重跑 / 事务整体回滚测试（**升级路径**待有第二个迁移后再补）
 - [x] 实际执行 fmt/clippy/test/typecheck/build（2026-10-22 本地全绿；CI 尚未跑绿）
-- [ ] **测试用例扩写 T1–T4**：T1（迁移与事务）✅ 30 个、T3（密文封装）✅ 40 个、T4（L2 契约）✅ 25 个；T2 同步纯函数未开始。见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
+- [x] **测试用例扩写 T1–T4**：T1（迁移与事务）✅ 30 个、T3（密文封装）✅ 40 个、T4（L2 契约）✅ 25 个、**T2（同步纯函数）✅ 57 个**。见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
 
 **出口**：真实持久化链路与 mock 契约均有测试，明确哪些模块尚未创建。
-*当前状态：T1/T3/T4 已完成（Rust 用例 4 → 99），**真实列表**未完成，P0 未出关。*
+*当前状态：T1–T4 全部完成（Rust 用例 4 → 163），**真实列表**未完成，P0 未出关。*
 
 ### P1：国内邮箱只读接入
 
@@ -133,10 +134,10 @@ Gmail 将来有需求再开独立决策：授权流程、scope、个人使用与
 
 1. 用户准备 163 / QQ / 沃邮箱测试环境；凭据仅在本机配置。
 2. AI 实现只读 probe 与假服务器测试；用户本机授权后运行并记录证据。
-3. AI 按 ARCHITECTURE/TESTING_STRATEGY 实现 T2（同步纯函数：UID 差分、epoch 切换、bit 意图合并）。
+3. AI 按 ARCHITECTURE/TESTING_STRATEGY 实现 P2 的同步编排（Actor、IMAP 会话、操作队列持久化）——T2 纯函数已就位。
 4. 把存储层接进应用：Command → 服务 → SQLite → React 真实列表（`list_accounts` 仍是硬编码空列表）。
 5. 提前做有限 Android 生命周期验证，不等待完整 UI。
 
-第 3 批的「最小存储与 L2 mock」已完成（2026-10-22）。每完成一个门槛再选择下一批，不将建议当作用户授权。
+第 3 批的「最小存储与 L2 mock」与 T2 同步纯函数已完成（2026-10-22）。每完成一个门槛再选择下一批，不将建议当作用户授权。
 
 相关：[架构](ARCHITECTURE.md) · [风险](ISSUES_AND_RISKS.md) · [测试](TESTING_STRATEGY.md) · [AI 规范](AI_DEVELOPMENT_GUIDE.md)

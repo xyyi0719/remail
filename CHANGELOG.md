@@ -7,6 +7,28 @@
 ## [Unreleased]
 
 ### Added
+- **`xremail-sync` crate（P0 / T2，同步纯函数）**：UID 差分、epoch 切换计算、bit 意图合并
+  - `UidSet` / `diff_uids`：算出「要拉取的」与「服务器已删的」，升序稳定输出
+    - `UidDiff::retain_local`：本地草稿与未发送内容有**独立归属**，不能因为服务器上没有就被清掉
+    - `UidDiff::chunk_added`：摘要分批拉取，避免一次拉太多
+  - `plan_epoch_transition`：epoch 未变 → 增量；首次同步 → 全量；epoch 变了 → **重建快照**，
+    并列出绑定旧 epoch 的待提交操作（**不得**套用到新 UID 上）
+    - `EpochTransition::requires_full_fetch()` 区分「全量拉取」与「重建快照」两个概念
+  - `FlagIntent` / `apply_intents` / `plan_flag_update`：服务器快照与本地待提交意图**分开**保存
+    - 同一 bit 的多个意图按 `seq` 排序：后者覆盖前者（`+Seen` 与 `-Seen` **确实会冲突**）
+    - 只发**净变化**的位，净变化为空时**不发命令**（不整组替换 FLAGS）
+    - 绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算
+    - `MAX_REPLAN_ATTEMPTS = 3`：MODIFIED 后重新读取并重算的次数上限（重试有界）
+  - 本阶段**只含纯函数**：无网络、无 IO，可直接在 CI 跑；账户调度与 IMAP 会话属 P2
+- **T2 用例 57 个**（单元 47 + 场景 10）：首次同步 / 增量同步 / 服务器删除保留草稿 /
+  epoch 变化重建并隔离旧意图 / 跨 epoch 作差是错的 / 本地视图合并 / 点了又取消不发命令 /
+  MODIFIED 后按新快照重算 / 旧意图绝不发给服务器 / 只发变化的位
+  - **已用 7 个变异验证用例有效性**：不排序 seq（1 个失败）、空 delta 也发命令（6）、
+    不隔离旧 epoch 操作（2）、added/removed 反转（6）、忽略 remove 位（5）、
+    忽略 epoch 校验（1）、保留策略失效（2）——全部被捕获
+  - Rust 用例总数：99 → **163**（含 core 新增 7 个 flags 集合代数用例）
+- **`xremail-core` 的 `MessageFlags` 补齐集合代数**：`union` / `intersection` / `difference` /
+  `is_empty` / `bits`——bit 意图合并需要「快照 → 最终」的净变化计算
 - **`xremail-store` crate（P0 存储地基）**：SQLite 持久化层，含迁移、连接池与账户/文件夹 DAO
   - 迁移 `crates/xremail-store/migrations/0001_init.sql`：10 张表——`account` / `folder` / `message` / `message_body` / `attachment` / `mail_operation` / `send_queue` / `local_secret` / `label` / `rule`
   - **身份不变量落到 schema 层**：`message` 表的 `UNIQUE (account_id, folder_id, uidvalidity, uid)`；RFC 5322 `Message-ID` **不建唯一约束**（仅作线索）

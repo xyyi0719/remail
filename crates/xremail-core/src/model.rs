@@ -272,6 +272,34 @@ impl MessageFlags {
         Self(self.0 & !flag)
     }
 
+    /// `true` when no bit is set.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The raw bit mask.
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    /// Union: every bit of both sets.
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Intersection: the bits both sets share.
+    pub const fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    /// Difference: `self` without the bits of `other`.
+    ///
+    /// 用于算「快照 → 最终」之间的**净变化**：只发送真正变化的位，
+    /// 而不是整组替换 FLAGS（见 [ARCHITECTURE §6](../../../docs/ARCHITECTURE.md)）。
+    pub const fn difference(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
     /// `true` when the message has been read.
     pub const fn is_read(self) -> bool {
         self.contains(Self::SEEN)
@@ -365,4 +393,79 @@ pub struct Attachment {
     pub local_path: Option<String>,
     pub sha256: Option<String>,
     pub fetched: bool,
+}
+
+#[cfg(test)]
+mod flags_tests {
+    use super::MessageFlags;
+
+    const SEEN: u32 = MessageFlags::SEEN;
+    const FLAGGED: u32 = MessageFlags::FLAGGED;
+    const DRAFT: u32 = MessageFlags::DRAFT;
+
+    #[test]
+    fn union_keeps_every_bit() {
+        let a = MessageFlags::empty().with(SEEN);
+        let b = MessageFlags::empty().with(FLAGGED);
+
+        let u = a.union(b);
+
+        assert!(u.contains(SEEN));
+        assert!(u.contains(FLAGGED));
+    }
+
+    #[test]
+    fn intersection_keeps_only_shared_bits() {
+        let a = MessageFlags::empty().with(SEEN).with(FLAGGED);
+        let b = MessageFlags::empty().with(FLAGGED).with(DRAFT);
+
+        let i = a.intersection(b);
+
+        assert!(!i.contains(SEEN));
+        assert!(i.contains(FLAGGED));
+        assert!(!i.contains(DRAFT));
+    }
+
+    #[test]
+    fn difference_removes_the_other_bits() {
+        let a = MessageFlags::empty().with(SEEN).with(FLAGGED);
+        let b = MessageFlags::empty().with(FLAGGED);
+
+        let d = a.difference(b);
+
+        assert!(d.contains(SEEN));
+        assert!(!d.contains(FLAGGED));
+    }
+
+    #[test]
+    fn difference_is_not_symmetric() {
+        let a = MessageFlags::empty().with(SEEN).with(FLAGGED);
+        let b = MessageFlags::empty().with(FLAGGED);
+
+        // a 去掉 b 的位 → 只剩 SEEN
+        assert!(a.difference(b).contains(SEEN));
+        assert!(!a.difference(b).contains(FLAGGED));
+        // b 去掉 a 的位 → 空
+        assert!(b.difference(a).is_empty());
+    }
+
+    #[test]
+    fn empty_set_is_empty() {
+        assert!(MessageFlags::empty().is_empty());
+        assert!(!MessageFlags::empty().with(SEEN).is_empty());
+    }
+
+    #[test]
+    fn bits_round_trips() {
+        let f = MessageFlags::empty().with(SEEN).with(DRAFT);
+
+        assert_eq!(f.bits(), SEEN | DRAFT);
+    }
+
+    #[test]
+    fn difference_of_equal_sets_is_empty() {
+        let a = MessageFlags::empty().with(SEEN).with(FLAGGED);
+
+        assert!(a.difference(a).is_empty());
+    }
 }

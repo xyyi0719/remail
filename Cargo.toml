@@ -6,6 +6,7 @@ members = [
     "crates/xremail-store",
     "crates/xremail-crypto",
     "crates/xremail-api",
+    "crates/xremail-sync",
     "apps/shell/src-tauri",
 ]
 
