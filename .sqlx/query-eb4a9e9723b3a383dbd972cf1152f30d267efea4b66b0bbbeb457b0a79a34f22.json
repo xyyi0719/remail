@@ -1,0 +1,266 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id, email, provider, display_name, color, auth_kind,\n               imap_host, imap_port, imap_tls,\n               smtp_host, smtp_port, smtp_tls, smtp_auth,\n               username, secret_ref, oauth_client_id, sync_mode,\n               poll_interval_secs, signature_html, created_at, updated_at\n        FROM account\n        WHERE id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "email",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "provider",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "name": "display_name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "name": "color",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "color"
+          }
+        }
+      },
+      {
+        "name": "auth_kind",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "auth_kind"
+          }
+        }
+      },
+      {
+        "name": "imap_host",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "imap_host"
+          }
+        }
+      },
+      {
+        "name": "imap_port",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "imap_port"
+          }
+        }
+      },
+      {
+        "name": "imap_tls",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "imap_tls"
+          }
+        }
+      },
+      {
+        "name": "smtp_host",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "smtp_host"
+          }
+        }
+      },
+      {
+        "name": "smtp_port",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "smtp_port"
+          }
+        }
+      },
+      {
+        "name": "smtp_tls",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "smtp_tls"
+          }
+        }
+      },
+      {
+        "name": "smtp_auth",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "smtp_auth"
+          }
+        }
+      },
+      {
+        "name": "username",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "name": "secret_ref",
+        "ordinal": 14,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "secret_ref"
+          }
+        }
+      },
+      {
+        "name": "oauth_client_id",
+        "ordinal": 15,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "oauth_client_id"
+          }
+        }
+      },
+      {
+        "name": "sync_mode",
+        "ordinal": 16,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "sync_mode"
+          }
+        }
+      },
+      {
+        "name": "poll_interval_secs",
+        "ordinal": 17,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "poll_interval_secs"
+          }
+        }
+      },
+      {
+        "name": "signature_html",
+        "ordinal": 18,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "signature_html"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 19,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 20,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "eb4a9e9723b3a383dbd972cf1152f30d267efea4b66b0bbbeb457b0a79a34f22"
+}

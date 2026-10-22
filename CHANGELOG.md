@@ -7,6 +7,20 @@
 ## [Unreleased]
 
 ### Added
+- **`xremail-store` crate（P0 存储地基）**：SQLite 持久化层，含迁移、连接池与账户/文件夹 DAO
+  - 迁移 `crates/xremail-store/migrations/0001_init.sql`：10 张表——`account` / `folder` / `message` / `message_body` / `attachment` / `mail_operation` / `send_queue` / `local_secret` / `label` / `rule`
+  - **身份不变量落到 schema 层**：`message` 表的 `UNIQUE (account_id, folder_id, uidvalidity, uid)`；RFC 5322 `Message-ID` **不建唯一约束**（仅作线索）
+  - 复合外键 `message(account_id, folder_id) → folder(account_id, id)`：保证邮件的账户与文件夹一致
+  - 删除策略逐表声明：缓存类（文件夹/邮件/正文/附件）随上级级联；`mail_operation` / `send_queue` 对邮件只做**逻辑引用**，不随邮件删除（epoch 切换后需隔离核对）
+  - `CHECK` 约束覆盖 IMAP 语义：`uid > 0`（UID 0 非法）、`uidvalidity > 0`、端口范围、`poll_interval_secs > 0`
+  - `mail_operation` 与 `send_queue` **分表**，不混为一个 outbox（两者的重试语义不同）
+  - 连接池：WAL、`busy_timeout`、**显式 `PRAGMA foreign_keys = ON`**（SQLite 默认不启用外键）、有界连接池
+  - 错误分类：约束冲突（唯一键/外键/CHECK）映射为 `AppError::Invalid`（**不可重试**），其余 sqlx 错误映射为 `AppError::Storage`
+- **T1 测试用例 30 个**（`xremail-store` 单元 6 + 集成 24）：迁移建表、迁移幂等、外键确实生效、身份唯一约束、不同 epoch 相同 UID 共存、Message-ID 非唯一、复合外键、CHECK 约束、逐表删除策略、账户/文件夹往返、upsert 语义、未知枚举不静默回退、事务整体回滚、文件库重开可读
+  - Rust 用例总数：4（core）→ **34**
+- **sqlx 离线查询数据 `.sqlx/`**：SQL 查询在**编译期**对 schema 校验（列名、列数、类型、可空性），CI 无需起数据库
+  - 已用反例验证：写错列名 / 列数不匹配 / 类型不匹配 / 可空性不匹配，四类均在编译期报错
+- **CI 新增「Verify sqlx offline data」步骤**：`cargo sqlx prepare --workspace --check` 校验 `.sqlx/` 与迁移/查询同步，过期即失败（已验证：故意改查询后返回 exit 1）
 - **`docs/ENVIRONMENT.md` §2.6「Ubuntu 26.04 开发机准备清单」**：发行版基线对照表（glibc 2.43 / GCC 15.2 / LLVM 21.1 / Python 3.14 / Rust 1.93.1 / OpenJDK 25）、已核实的系统依赖包名、Rust/Node 装法、Android 组件、与 CI 的联动（`ubuntu-latest` 将于 2026-11 切到 26.04）、glibc 兼容下限对 .deb 的影响、WSL2 预演方式
 - **本机补装工具**：`cargo-audit` 0.22.2、`cargo-deny` 0.20.2、`git-filter-repo`（pip --user）
 - **Android 工具链就绪**（2026-10-21）：JDK 17.0.20.1、Android SDK（cmdline-tools 13.0 / platform-tools 37.0.1 / platforms android-36 与 37.0 / build-tools 36.0.0 与 37.0.0）、NDK 27.2.12479018、cargo-ndk 4.1.2、4 个 Rust Android target；均装在用户目录（本机非管理员）
@@ -29,8 +43,17 @@
 - Tauri 2 + React 19 + TypeScript 工程脚手架（`apps/shell`）
 - `xremail-core` crate：领域模型（账户、文件夹、邮件、Flags、地址、事件）
 - `xremail-core` 错误分类单测 4 个
+- `xremail-core` 的 `Folder` 新增 `uidvalidity` 字段（该文件夹的 **epoch**）：它本来就是领域概念（ARCHITECTURE §4.3 要求按 epoch 切换游标），此前模型里没有，DAO 无法往返
 
 ### Changed
+- **R13 决策：release profile 的 panic 策略由 `abort` 改为 `unwind`**
+  - 理由：P0 开始引入 tokio 异步任务，`abort` 下任一 panic 会终止整个进程，后台同步任务无法用 `catch_unwind` 兜底；现在改成本最低，体积代价很小
+  - 保留的配套要求：后台 task 边界需 `catch_unwind`（待 `xremail-sync` 落地时实现）
+  - 依据：[ARCHITECTURE §9](docs/ARCHITECTURE.md)、[ISSUES_AND_RISKS R13](docs/ISSUES_AND_RISKS.md)
+- **MSRV 由 1.88 上提至 1.94**：sqlx 0.9.0 声明的 MSRV 是 1.94.0，继续声明 1.88 会成为假声明
+- **领域枚举改为显式 `serde` 名称**（`ProviderKind` / `AuthKind` / `TlsMode` / `SmtpAuth` / `SyncMode`）
+  - 原因：这些字符串会作为 SQLite 列值落库。若依赖 `rename_all` 自动推导，Rust 变体改名会让旧行读不出来（静默丢数据）
+  - 附带修正：`ProviderKind::Netease163` 原先自动推导为 `netease163`（数字不产生分隔符），现为显式的 `netease_163`
 - **项目改名：ReMail → Xremail**
   - 展示名 `Xremail`；crate / npm 包名 `xremail-core` / `xremail-shell`；Tauri identifier `com.xremail.app`
   - 原因：`remail` 在 crates.io（Rust 邮件服务器 v0.0.1）与 npm（React 邮件组件框架 v2.1.0）均已被占用；`xremail` 三个注册表均可用，GitHub 无同名仓库

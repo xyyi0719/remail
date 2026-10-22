@@ -26,7 +26,8 @@
 - [x] Git 仓库、Tauri/React 脚手架、Cargo workspace、xremail-core。
 - [x] 文档与 CI workflow 文件；测试策略/AI 工作规范已定义。
 - [x] `xremail-core` 错误分类单测 4 个（2026-10-20）。
-- [ ] 实际 SQLite、真实账户列表、协议适配、收发链路。
+- [x] `xremail-store`：迁移 + 账户/文件夹 DAO + 身份约束（2026-10-22）；T1 用例 30 个。
+- [ ] 实际 SQLite **接入应用**（`list_accounts` 仍返回硬编码空列表）、真实账户列表、协议适配、收发链路。
 - [ ] 自动化业务测试与真实邮箱/Android 验收证据。
 
 此前本地构建检查不等于 GitHub CI 已跑绿；工作完成以可重复结果为准。
@@ -35,14 +36,20 @@
 
 ### P0：可测试的最小地基
 
-- [ ] xremail-store：迁移、账户/文件夹 DAO、事务与身份约束。
+- [x] xremail-store：迁移、账户/文件夹 DAO、身份约束（`crates/xremail-store`，2026-10-22）
+  - 迁移 `0001_init.sql`（10 张表）；身份不变量 `UNIQUE (account_id, folder_id, uidvalidity, uid)` 落到 schema
+  - DAO：账户 upsert/list/get/delete，文件夹 upsert/list/get/delete
+- [ ] xremail-store：跨表事务封装（当前只有 schema 层的事务语义有测试，尚未提供多语句事务 API）
 - [ ] xremail-api：SecretStore、VaultStore、SyncBackend 最小契约与可运行 mock；CAS 冲突测试。
-- [ ] L2 schema 预留（local_secret 仅版本化密文、label/rule 等）与最小密码封装测试；不是凭据明文落库。
+- [x] L2 schema 预留：`local_secret` 只存版本化密文、`label` / `rule` 预留稳定 ID 与 schema version（迁移已就位）
+- [ ] 最小密码封装测试（`xremail-crypto`：argon2 KDF + AEAD 往返 / 篡改检测）
 - [ ] Command → 服务 → SQLite → React 真实列表，不以硬编码空列表验收。
-- [ ] 新库/升级/回滚测试；实际执行 fmt/clippy/test/typecheck/build。
-- [ ] **测试用例扩写 T1–T4**（迁移与事务、同步纯函数、密文封装、L2 契约），见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
+- [x] 新库 / 迁移幂等重跑 / 事务整体回滚测试（**升级路径**待有第二个迁移后再补）
+- [x] 实际执行 fmt/clippy/test/typecheck/build（2026-10-22 本地全绿；CI 尚未跑绿）
+- [ ] **测试用例扩写 T1–T4**：T1（迁移与事务）✅ 30 个用例；T2 同步纯函数、T3 密文封装、T4 L2 契约未开始。见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
 
 **出口**：真实持久化链路与 mock 契约均有测试，明确哪些模块尚未创建。
+*当前状态：T1 已完成，mock 契约与真实列表未完成，P0 未出关。*
 
 ### P1：国内邮箱只读接入
 

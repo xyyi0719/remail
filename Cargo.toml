@@ -3,6 +3,7 @@
 resolver = "3"
 members = [
     "crates/xremail-core",
+    "crates/xremail-store",
     "apps/shell/src-tauri",
 ]
 
@@ -12,7 +13,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+# sqlx 0.9.0 声明的 MSRV 是 1.94.0。原先的 1.88 在引入 sqlx 后会成为
+# 假声明，故随依赖一起上提。取 sqlx 的 MSRV 与本仓库 edition 要求的较大者。
+rust-version = "1.94"
 license = "MIT OR Apache-2.0"
 authors = ["xyyi0719"]
 repository = "https://github.com/xyyi0719/xremail"
@@ -23,6 +26,7 @@ repository = "https://github.com/xyyi0719/xremail"
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
 xremail-core = { path = "crates/xremail-core" }
+xremail-store = { path = "crates/xremail-store" }
 
 anyhow = "1"
 thiserror = "2"
@@ -32,17 +36,32 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# SQLite 访问层。特性说明：
+# - sqlite-bundled：自带 SQLite 源码编译，不依赖系统安装的 sqlite3，
+#   Windows 与 Android 打包时省去外部依赖。
+# - 不启用 sqlite-load-extension：不引入动态扩展加载能力，减少攻击面。
+# - runtime-tokio：与 workspace 的 tokio 运行时一致。
+# - macros：启用 query_as! 等编译期校验宏（依赖 .sqlx/ 离线查询数据）。
+# - migrate：启用 sqlx::migrate!()，把迁移在编译期内嵌进二进制。
+sqlx = { version = "0.9", default-features = false, features = [
+    "sqlite-bundled",
+    "runtime-tokio",
+    "macros",
+    "migrate",
+] }
+
 # ---------------------------------------------------------------------------
 # 发布配置
 # 放在根 workspace：子 package 里的 profile 会被 cargo 忽略。
 #
-# panic = "abort" 的取舍：体积更小，但任一 panic 会终止整个进程，
-# 后台同步任务无法用 catch_unwind 兜底。改为 "unwind" 可让 tokio 任务
+# panic 策略已决策为 "unwind"（R13）：
+# "abort" 体积更小，但任一 panic 会终止整个进程，后台同步任务无法用
+# catch_unwind 兜底。P0 引入 tokio 异步任务后，"unwind" 可让 tokio 任务
 # 级别的 panic 不至于拖垮应用（见 docs/ISSUES_AND_RISKS.md R13）。
 # ---------------------------------------------------------------------------
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
+panic = "unwind"
 strip = true

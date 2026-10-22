@@ -17,7 +17,7 @@
 
 ## 2. 模块与依赖
 
-当前只有 `xremail-core` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前只有 `xremail-core`、`xremail-store` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|
@@ -74,6 +74,12 @@ RFC Message-ID 只能作线索，不能作为唯一键或自动跨文件夹去�
 禁止把旧操作直接套到新 UID；重新全量建立该文件夹快照。保留操作记录与冲突原因供恢复/提示，附件引用按回收策略处理，不能误删共享 blob。
 PLAN 已有 `sync_state.uidvalidity`，无需重复添加同义字段。
 
+**实现落点（2026-10-22，P0 迁移 `0001_init.sql`）**：epoch 与游标统一放在 `folder` 表
+（`uidvalidity` / `last_uid` / `highest_modseq` / `last_sync_at`），与 `xremail-core` 的
+`Folder` 结构一一对应，**不另建 `sync_state` 表**——那样会出现两处同义字段。
+`mail_operation` / `send_queue` 对邮件只做**逻辑引用**（不设外键）：epoch 切换后旧 UID 失效，
+这些操作应被隔离并保留冲突原因，而不是随邮件一起被级联删除。
+
 ## 5. 本地操作与恢复
 
 将队列分为 **mail_operation**（flag/move/delete/append）与 **send_queue**（SMTP）。名称可在迁移时定稿，避免一个模糊 outbox 混淆语义。
@@ -129,6 +135,9 @@ Linux/macOS/iOS 不属于当前验收平台，不因 Tauri 支持就视为产品
 
 错误按可恢复原因分类：传输临时失败退避；认证需用户动作；磁盘满/迁移失败不能当普通 Storage 错误无限重试；协议错误不原样输出可能含凭据/正文的响应。
 事件枚举以 `xremail-core/src/event.rs` 为准，flag 更新使用 MessageUpserted，当前没有 FlagsChanged。
+**约束冲突不是可重试错误**：`xremail-store` 把唯一键/外键/CHECK 违反映射为 `AppError::Invalid`
+（不可重试），其余 sqlx 错误映射为 `AppError::Storage`（可重试）。重试同一份输入不可能成功，
+因此不能一律归入 Storage。
 
 错误附加上下文时必须保留错误变体，否则 `is_retryable()` / `requires_user_action()` 判定失效。
 `AppError::with_context` 按变体逐个包裹，`Context::ctx` 基于它实现，已有单测锁定该行为。

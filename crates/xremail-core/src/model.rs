@@ -11,27 +11,38 @@ use serde::{Deserialize, Serialize};
 /// The enum is a *preset* marker only — every field of the account is
 /// overridable, because real-world deployments differ per region and per
 /// mailbox tier (see `docs/PROTOCOLS.md`).
+///
+/// **每个变体都有显式的 `serde` 名称**：这些字符串会作为 SQLite 的列值落库，
+/// 若依赖 `rename_all` 自动推导，变体改名会让旧行读不出来（静默丢数据）。
+/// 改名时必须同时写迁移。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
     /// 163 mailboxes (`@163.com`, personal).
+    #[serde(rename = "netease_163")]
     Netease163,
     /// 126 mailboxes (`@126.com`, personal).
+    #[serde(rename = "netease_126")]
     Netease126,
     /// 网易企业邮 mailboxes (`@qiye.163.com`): Coremail-like, region-specific hosts.
+    #[serde(rename = "netease_enterprise")]
     NeteaseEnterprise,
     /// QQ mailboxes (`@qq.com`).
+    #[serde(rename = "tencent")]
     Tencent,
     /// 沃邮箱 mailboxes (`@wo.cn`): Coremail-based.
+    #[serde(rename = "wo")]
     Wo,
     /// Gmail / Workspace mailboxes.
     ///
     /// Workspace 账号自 2025-05-01 起禁用密码基础认证；个人账号在开启两步验证后
     /// 仍可用“应用专用密码”走基础认证。Gmail 当前暂缓接入，见 ADR-0003。
+    #[serde(rename = "google")]
     Google,
     /// Exchange / Outlook 365 mailboxes.
+    #[serde(rename = "exchange")]
     Exchange,
     /// Anything else, configured manually.
+    #[serde(rename = "generic")]
     Generic,
 }
 
@@ -57,48 +68,63 @@ impl ProviderKind {
 }
 
 /// How the client authenticates against IMAP/SMTP.
+///
+/// 显式 `serde` 名称：见 [`ProviderKind`] 的说明（这些值会落库）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum AuthKind {
     /// Password or provider-issued authorisation code (163/QQ/Wo).
+    #[serde(rename = "password")]
     Password,
     /// OAuth 2.0 with the `XOAUTH2` SASL mechanism (Gmail / Exchange).
+    #[serde(rename = "oauth2")]
     OAuth2,
 }
 
 /// Transport security of a protocol endpoint.
+///
+/// 显式 `serde` 名称：见 [`ProviderKind`] 的说明（这些值会落库）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum TlsMode {
     /// Plaintext (never used for real accounts).
+    #[serde(rename = "none")]
     None,
     /// Opportunistic TLS: connect in plaintext, then `STARTTLS`.
+    #[serde(rename = "starttls")]
     Starttls,
     /// Implicit TLS: connect directly on a TLS socket (IMAPS/SMTPS).
+    #[serde(rename = "implicit")]
     Implicit,
 }
 
 /// SMTP authentication mechanism.
+///
+/// 显式 `serde` 名称：见 [`ProviderKind`] 的说明（这些值会落库）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum SmtpAuth {
     /// No authentication (rarely useful).
+    #[serde(rename = "none")]
     None,
     /// `AUTH PLAIN`.
+    #[serde(rename = "plain")]
     Plain,
     /// `AUTH LOGIN`.
+    #[serde(rename = "login")]
     Login,
     /// `AUTH XOAUTH2`.
+    #[serde(rename = "xoauth2")]
     XOAuth2,
 }
 
 /// How aggressively the client keeps the IMAP connection open.
+///
+/// 显式 `serde` 名称：见 [`ProviderKind`] 的说明（这些值会落库）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum SyncMode {
     /// Long-lived `IDLE` connection; lowest latency, higher battery use.
+    #[serde(rename = "idle")]
     Idle,
     /// Periodic polling; gentler on servers and on battery.
+    #[serde(rename = "poll")]
     Poll,
 }
 
@@ -182,6 +208,14 @@ pub struct Folder {
     pub last_sync_at: Option<i64>,
     pub last_uid: Option<i64>,
     pub highest_modseq: Option<i64>,
+    /// 服务器侧 UIDVALIDITY，即本文件夹的 **epoch**。
+    ///
+    /// 变更表示服务器已作废旧的 UID 映射，必须在一个事务内切换 epoch、
+    /// 失效旧游标并隔离绑定旧 epoch 的待提交操作
+    /// （见 [ARCHITECTURE §4.3](../../../docs/ARCHITECTURE.md)）。
+    ///
+    /// `None` 表示尚未与该文件夹完成过一次同步，因而还不知道 epoch。
+    pub uidvalidity: Option<i64>,
 }
 
 impl Folder {

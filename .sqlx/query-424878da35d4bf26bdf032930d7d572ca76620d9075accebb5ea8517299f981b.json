@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO account (\n            id, email, provider, display_name, color, auth_kind,\n            imap_host, imap_port, imap_tls,\n            smtp_host, smtp_port, smtp_tls, smtp_auth,\n            username, secret_ref, oauth_client_id, sync_mode,\n            poll_interval_secs, signature_html, created_at, updated_at\n        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ON CONFLICT (id) DO UPDATE SET\n            email              = excluded.email,\n            provider           = excluded.provider,\n            display_name       = excluded.display_name,\n            color              = excluded.color,\n            auth_kind          = excluded.auth_kind,\n            imap_host          = excluded.imap_host,\n            imap_port          = excluded.imap_port,\n            imap_tls           = excluded.imap_tls,\n            smtp_host          = excluded.smtp_host,\n            smtp_port          = excluded.smtp_port,\n            smtp_tls           = excluded.smtp_tls,\n            smtp_auth          = excluded.smtp_auth,\n            username           = excluded.username,\n            secret_ref         = excluded.secret_ref,\n            oauth_client_id    = excluded.oauth_client_id,\n            sync_mode          = excluded.sync_mode,\n            poll_interval_secs = excluded.poll_interval_secs,\n            signature_html     = excluded.signature_html,\n            updated_at         = excluded.updated_at\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 21
+    },
+    "nullable": []
+  },
+  "hash": "424878da35d4bf26bdf032930d7d572ca76620d9075accebb5ea8517299f981b"
+}

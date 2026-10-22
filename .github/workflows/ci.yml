@@ -13,6 +13,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # sqlx 的 query! 宏默认连库校验 schema。CI 里改为只读仓库中的
+  # 离线查询数据（.sqlx/），无需起数据库；数据是否过期由单独的
+  # “Verify sqlx offline data” 步骤检查。
+  SQLX_OFFLINE: "true"
 
 jobs:
   rust:
@@ -52,6 +56,27 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: Verify sqlx offline data
+        # .sqlx/ 必须与迁移和查询保持同步：迁移改了 schema 而忘了重新
+        # prepare，编译期校验就会用旧数据放过不一致的查询。
+        # --check 模式在数据过期时返回 1。
+        #
+        # 只在 ubuntu 上跑一次：该检查与平台无关，而 sqlx-cli 从源码
+        # 编译需要几分钟，重复跑两遍只是浪费时间。
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          # 这一步必须**真的连库**比对，因此要关掉离线模式；
+          # 否则拿旧缓存跟自己比，检查形同虚设。
+          SQLX_OFFLINE: "false"
+          DATABASE_URL: sqlite://target/xremail-ci.db
+        run: |
+          cargo install sqlx-cli --version 0.9.0 --no-default-features --features sqlite,rustls --locked
+          # SQLite 下 sqlx 不会自动创建库文件（会报 unable to open database file），
+          # 需先建空文件再套用迁移。
+          touch target/xremail-ci.db
+          sqlx migrate run --source crates/xremail-store/migrations
+          cargo sqlx prepare --workspace --check -- --all-targets
 
       - name: Report test case count
         # windows-latest 默认 shell 是 PowerShell，不支持 $(...)/grep/2>/dev/null。

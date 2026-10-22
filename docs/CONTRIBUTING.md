@@ -6,19 +6,49 @@
 
 | 依赖 | 版本 | 安装 |
 |---|---|---|
-| Rust | ≥ 1.88 | `rustup update stable` |
+| Rust | ≥ 1.94 | `rustup update stable` |
 | Node.js | ≥ 20 | `fnm install 20` / `nvm use 20` |
 | pnpm / npm | 任意 | 仓库用 npm（`package-lock.json` 已提交） |
+| sqlx-cli 0.9 | 仅改 SQL / 迁移时 | `cargo install sqlx-cli --version 0.9.0 --no-default-features --features sqlite,rustls` |
 | Android SDK + NDK + JDK 17 | 仅 Android | Android Studio |
 | Windows: WebView2 + MSVC Build Tools | 仅 Windows 桌面 | [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/) |
 
 > 2026-10-20 本机实测：Rust 1.99.1、Node 22.21.0 可用；**仅装有 JDK 8 且无 Android SDK**，
 > 因此本机暂时无法构建 Android 产物，P4 前需先补 JDK 17 + SDK/NDK。
+>
+> MSRV 由 1.88 上提至 1.94：sqlx 0.9.0 声明的 MSRV 是 1.94.0。
 
 ```bash
 npm install --prefix apps/shell
 cargo check --workspace
 ```
+
+### SQL 变更流程（sqlx 离线数据）
+
+`xremail-store` 的 SQL 用 `sqlx` 的 `query!` / `query_as!` 宏，**在编译期**对 schema 校验：
+列名、列数、类型、可空性写错都会直接编译失败（不等到运行时）。
+
+仓库里提交了 `.sqlx/` 离线查询数据，因此普通编译**不需要数据库**：
+
+```bash
+# 日常编译/测试：直接用仓库里的离线数据
+SQLX_OFFLINE=true cargo check --workspace
+```
+
+改了迁移或 SQL 之后，必须重新生成离线数据：
+
+```bash
+# 1. 造一个带最新 schema 的库（SQLite 下 sqlx 不会自动建库文件，需先 touch）
+touch target/xremail-dev.db
+sqlx migrate run --source crates/xremail-store/migrations
+
+# 2. 连库重新生成离线数据（需临时关掉离线模式）
+SQLX_OFFLINE=false DATABASE_URL="sqlite://target/xremail-dev.db" \
+  cargo sqlx prepare --workspace -- --all-targets
+```
+
+生成的 `.sqlx/*.json` **要一并提交**。CI 的「Verify sqlx offline data」步骤用
+`cargo sqlx prepare --workspace --check` 校验它是否与迁移/查询同步，过期即失败。
 
 ---
 

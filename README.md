@@ -13,7 +13,8 @@
 > **v0.1.0 · P0 脚手架阶段**（2026-10）
 >
 > 工程骨架已生成，架构持续复核，协议与持久化业务尚未实现。当前设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-> 2026-10-20 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（4 个用例）/ `npm typecheck` / `npm build` 均通过。
+> 2026-10-22 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（34 个用例）/ `npm typecheck` / `npm build` 均通过。
+> 存储层（`xremail-store`）已落地：迁移、账户/文件夹 DAO、身份约束与 T1 测试已完成；**尚未接入应用**（`list_accounts` 仍返回硬编码空列表）。
 > 想看进度：[docs/ROADMAP.md](docs/ROADMAP.md)
 
 | 状态 |
@@ -49,7 +50,7 @@
 └────────────────────────────────────────────────────────┘
 ```
 
-**目标架构：UI 经 Rust 服务查询 SQLite，持久化写入只走 Rust。** 事件用于刷新提示，漏事件后可重新查询；上图中除 core/shell 外的模块仍为规划。
+**目标架构：UI 经 Rust 服务查询 SQLite，持久化写入只走 Rust。** 事件用于刷新提示，漏事件后可重新查询；上图中除 core/store/shell 外的模块仍为规划。
 
 ---
 
@@ -68,7 +69,7 @@
 | SMTP | lettre | 0.11 |
 | 存储 | SQLite (sqlx, WAL) + FTS5 | 0.9 |
 | 密钥库 | 平台 SecretStore（后端待验证） | 待定 |
-| 密码学 | argon2 + chacha20poly1305 | 0.5 / 0.10 |
+| 密码学 | argon2 + chacha20poly1305 | 0.6 / 0.11 |
 
 > 此表混合已使用与计划依赖；实际版本以 Cargo.lock/package-lock.json 为准。TanStack、编辑器、协议/存储/密码学库尚未接入，不代表已验证兼容性；依赖维护状态应在引入时复核。
 
