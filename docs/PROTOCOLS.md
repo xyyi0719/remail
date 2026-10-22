@@ -40,11 +40,74 @@
 
 | 项 | 值 | 来源 | 状态 |
 |---|---|---|---|
-| IMAP | `imap.163.com:993` (IMAPS) | 社区实测 | ⚠️ 待实测 |
-| SMTP | `smtp.163.com:465` (SSL) | 官方/社区 | ⚠️ 待实测 |
-| SMTP 备选 | `smtp.163.com:994` (STARTTLS) | 社区 | ⚠️ 待实测 |
+| IMAP | `imap.163.com:993` (IMAPS) | 社区实测 | ✅ **已实测**（2026-10-22，预认证阶段） |
+| SMTP | `smtp.163.com:465` (SSL) | 官方/社区 | ✅ **已实测**（2026-10-22） |
+| SMTP 备选 | `smtp.163.com:994` (STARTTLS) | 社区 | ✅ **已实测**（2026-10-22，隐式 TLS 也能握手） |
 | 认证 | 16 位**客户端授权码** | [官方帮助](https://help.mail.163.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac2a5feb28b66796d3b) | ✅ |
 | 开启方式 | 网页版 → 设置 → POP/SMTP/IMAP → 开启 → 短信验证 | 官方 | ✅ |
+
+### 预认证实测记录（2026-10-22）
+
+> **环境**：Windows 11，本机；客户端为 **Node.js 22.21.0 的 `tls` 模块**（连通性预探测，
+> **不是**本项目的 Rust 客户端，Rust 客户端的结论要重测）。
+> **区域/节点**：本机出口 IP 所在区域未知，未记录（后续需补）。
+> **凭据**：本轮**未使用任何凭据**，只做预认证阶段探测。
+
+**DNS 与连通性**
+
+| 目标 | 解析结果 | TCP |
+|---|---|---|
+| `imap.163.com` | 220.197.33.205 / 220.197.33.210 | 993 ✅ / 143 ✅ |
+| `smtp.163.com` | 220.197.33.215 / 220.197.33.205 | 465 ✅ / 994 ✅ |
+
+**TLS（IMAP 993 与 SMTP 465/994 三者一致）**
+
+| 项 | 观察值 |
+|---|---|
+| 协议版本 | TLSv1.3 |
+| 加密套件 | `TLS_AES_256_GCM_SHA384` |
+| 证书 subject | `CN=*.163.com, O=NetEase (Hangzhou) Network Co., Ltd, C=CN` |
+| 证书 issuer | `CN=GeoTrust G2 TLS CN RSA4096 SHA256 2022 CA1, O=DigiCert, Inc.` |
+| 有效期 | 2026-09-25 → 2027-04-11 |
+| 主机名校验 | ✅ **通过**（系统根证书链，无需导入自签 CA） |
+
+> **与 SECURITY §2.2 相关**：本次实测确认 163 的服务端证书由**公开 CA（DigiCert）**签发，
+> 系统根即可校验通过——**不是**「国内 CA 一定缺失」的情况。
+> 但这只是 163 一家的结论，不能推广到其他服务商。
+
+**IMAP 预认证阶段**
+
+| 观察 | 响应 |
+|---|---|
+| 问候行 | `* OK Coremail System IMap Server Ready(163com[…])` |
+| `CAPABILITY` | `CAPABILITY BAD command not support` |
+| `NOOP` | `NOOP BAD command not support` |
+| `LOGOUT` | `LOGOUT BAD command not support` |
+
+> **重要结论**：163（Coremail 体系）在**认证前拒绝一切 IMAP 命令**，
+> 连 `LOGOUT` 都回 `BAD command not support`。
+> ⇒ **能力集只能在登录之后获取**，预认证探测拿不到。
+> 这与 [ARCHITECTURE §4.2]「使用认证后能力」一致，且明确了「认证后」不是可选项而是强制项。
+> 探针实现时**不要**假设登录前能拿到 CAPABILITY。
+
+**SMTP 预认证阶段（EHLO）**
+
+| 观察 | 响应 |
+|---|---|
+| 问候行 | `220 163.com Anti-spam GT for Coremail System (163com[20141201])` |
+| 能力行 | `250-mail` / `250-AUTH LOGIN PLAIN XOAUTH2` / `250-AUTH=LOGIN PLAIN XOAUTH2` / `250-coremail <base64>` / `250-STARTTLS` / `250-ID` / `250 8BITMIME` |
+
+| 结论 | 状态 |
+|---|---|
+| 认证机制含 `LOGIN`（授权码走这个）与 `PLAIN`；另有 `XOAUTH2` | ✅ 已实测 |
+| 扩展 `8BITMIME` | ✅ 已实测 |
+| 扩展 `STARTTLS` | ✅ 已实测 |
+| **无 `SIZE` 扩展** | ✅ 已实测（发信不能用 SIZE 优化） |
+| **无 `PIPELINING`** | ✅ 已实测 |
+| 994 端口在**隐式 TLS** 下也能握手成功，且仍宣告 `STARTTLS` | ✅ 已实测（**含义待确认**：994 究竟是明文 SMTP 端口还是也接受隐式 TLS，**一次观察不足以断言**，需用明文连一次对照） |
+
+**仍待实测**（需登录后）：IDLE / CONDSTORE / QRESYNC / UIDPLUS / `UID MOVE` 支持度、
+认证后 CAPABILITY 全集、文件夹结构、邮件头字符集抽样、并发连接上限。
 
 **已知坑**
 
