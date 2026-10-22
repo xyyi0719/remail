@@ -7,6 +7,12 @@
 ## [Unreleased]
 
 ### Added
+- **`docs/ENVIRONMENT.md` §2.6「Ubuntu 26.04 开发机准备清单」**：发行版基线对照表（glibc 2.43 / GCC 15.2 / LLVM 21.1 / Python 3.14 / Rust 1.93.1 / OpenJDK 25）、已核实的系统依赖包名、Rust/Node 装法、Android 组件、与 CI 的联动（`ubuntu-latest` 将于 2026-11 切到 26.04）、glibc 兼容下限对 .deb 的影响、WSL2 预演方式
+- **本机补装工具**：`cargo-audit` 0.22.2、`cargo-deny` 0.20.2、`git-filter-repo`（pip --user）
+- **Android 工具链就绪**（2026-10-21）：JDK 17.0.20.1、Android SDK（cmdline-tools 13.0 / platform-tools 37.0.1 / platforms android-36 与 37.0 / build-tools 36.0.0 与 37.0.0）、NDK 27.2.12479018、cargo-ndk 4.1.2、4 个 Rust Android target；均装在用户目录（本机非管理员）
+  - 用户级环境变量：`JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`NDK_HOME`
+  - `tauri android init` 成功，`cargo build --target aarch64-linux-android` 产物经 `file` 确认为 ARM aarch64 ELF
+  - **未完成**：APK 打包卡在 Windows 符号链接权限（非管理员且未重登录，开发者模式已写入注册表待生效）——见 [ENVIRONMENT §1.8](docs/ENVIRONMENT.md)
 - 环境特性与平台差异文档 `docs/ENVIRONMENT.md`：本机 shell / 代理 / DNS / 工具链限制，各平台 WebView 与 API 差异，写脚本与 CI 前的检查清单
 - 测试用例扩写计划 `docs/TESTING_STRATEGY.md §5`：T1–T10 优先级、每项的「算完成」标准、用例数作为进度指标
 - CI 新增「Report test case count」步骤，输出 Rust 用例数到 job summary
@@ -40,6 +46,13 @@
 - 文档作者/负责人署名为 xyyi0719
 
 ### Fixed
+- **桌面端专属插件在 Android 目标上编译失败**：`tauri-plugin-single-instance` 的 `init` 与 `tauri-plugin-autostart` 的 `init` / `MacosLauncher` 只在桌面端存在
+  - `apps/shell/src-tauri/src/lib.rs`：两个插件用 `#[cfg(desktop)]` 隔离，`use tauri::Manager` 同步加门（Android 侧未用到，否则 clippy `-D warnings` 会报错）
+  - 影响面：仅 Android 目标的编译；桌面端行为不变
+- **`docs/ENVIRONMENT.md` 更新过时的 Android 结论**
+  - §1.1 工具链表：OpenJDK 从「仅 1.8.0_502」改为 17.0.20.1，并补 Android SDK / NDK / cargo-ndk / cargo-audit / cargo-deny / git-filter-repo 行
+  - 新增 §1.8「Android 工具链」：安装位置、用户级环境变量、5 条踩坑（Adoptium 跳转 GitHub 被劫持、包名实为 `platforms;android-37.0`、`sdkmanager` 需 JDK 17、Git Bash 下 `reg add` 的 `/v` 被 MSYS 改写、桌面端插件在 Android 无 API），以及当前唯一卡点（符号链接权限需重登录）
+  - §2.1 平台支持表：Android 从「⛔ 本机不可构建」改为「🟡 Rust 侧可交叉编译，APK 打包待权限」
 - **`docs/ENVIRONMENT.md` §1.5 不再写死本机手动设置的代理地址**
   - 删除文档里的具体代理 `host:port`（该值会随网络环境变化，且属于内网信息）；改为运行时从注册表读 `ProxyServer` / `ProxyEnable` / `ProxyOverride`
   - 实测发现文档里的旧值已与注册表当前值**不一致**，证实写死必然失效

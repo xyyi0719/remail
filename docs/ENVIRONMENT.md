@@ -17,11 +17,18 @@
 | Node.js | 22.21.0 | |
 | npm | 随 Node | `package-lock.json` 已提交 |
 | Python | 3.11.0 | CI 的 docs job 用它跑脚本 |
-| OpenJDK | **仅 1.8.0_502** | ⚠️ **无 JDK 17，无 Android SDK/NDK** |
+| OpenJDK | **17.0.20.1**（`~/.jdks/jdk-17.0.20.1+1`） | 2026-10-21 装的 Microsoft OpenJDK 17，**免安装 zip**，装在用户目录无需管理员。机器级另有 Corretto **1.8.0_502**（`JAVA_HOME` 用户级已指向 17） |
+| Android SDK | cmdline-tools 13.0，`%LOCALAPPDATA%\Android\Sdk` | 含 platform-tools 37.0.1、platforms android-36 / 37.0、build-tools 36.0.0 / 37.0.0 |
+| Android NDK | **27.2.12479018**（side by side） | Tauri v2 + cargo-ndk 的稳妥组合 |
+| cargo-ndk | 4.1.2 | `cargo install cargo-ndk --locked` |
+| cargo-audit | 0.22.2 | `cargo install cargo-audit --locked`；[SECURITY §1 T12](SECURITY.md) 的供应链防护。**拉 advisory-db 要走代理**（`https_proxy=... cargo audit`），否则卡在 `github.com` DNS 劫持 |
+| cargo-deny | 0.20.2 | `cargo install cargo-deny --locked`；依赖许可与来源白名单 |
+| git-filter-repo | a40bce548d2c | `python -m pip install --user git-filter-repo`（免管理员）；换历史、改目录名时用 |
 | gh CLI | 2.102.0 | 已登录 `xyyi0719` |
-| Git | 内置 | `filter-repo` **未安装**（只能用 `filter-branch`） |
+| Git | 内置 | `filter-repo` **已装**（pip --user），但 `~/.cargo/bin` 与 `AppData\Roaming\Python\Python311\Scripts` 需在 PATH 上 |
 
-> **Android 构建在本机暂不可行**：需要 JDK 17 + Android SDK + NDK。见 [ROADMAP P4](ROADMAP.md)。
+> **Android 构建链已打通（2026-10-21）**，只剩一个需要重登录的权限项，见 §1.8。
+> 本机**非管理员**，所有组件都装在用户目录，未动 `Program Files`。
 
 ### 1.2 Shell 差异（最容易出错的地方）
 
@@ -257,17 +264,75 @@ echo "PUSH_FAIL: $TRIES 次尝试内未完成推送；停下报给维护者，�
 > 曾在 4 个文件里全部写成少一层，被 CI 的 doc-comment 检查抓出。
 > **CI 已加自动检查**（见 `.github/workflows/ci.yml` 的 docs job）。
 
+### 1.8 Android 工具链（2026-10-21 装）
+
+非管理员环境下用**免安装 zip** 装在用户目录，未动 `Program Files`：
+
+| 组件 | 位置 | 装法 |
+|---|---|---|
+| JDK 17 | `C:\Users\UNI-LX\.jdks\jdk-17.0.20.1+1` | `https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip` 解压即用 |
+| Android SDK | `C:\Users\UNI-LX\AppData\Local\Android\Sdk` | `commandlinetools-win-11479570_latest.zip` 解压到 `cmdline-tools/latest` |
+| NDK | `%ANDROID_HOME%\ndk\27.2.12479018` | `sdkmanager "ndk;27.2.12479018"` |
+
+**用户级环境变量**（机器级 `JAVA_HOME` 仍指向 Corretto 8，用户级优先级更高）：
+`JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`NDK_HOME`。
+
+Rust 侧：`rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android` + `cargo install cargo-ndk --locked`。
+
+**踩过的坑**：
+
+1. **JDK 下载源**：Adoptium API 会 307 跳到 `github.com`，而本机 `github.com` 被 DNS 劫持到
+   127.0.0.1 → 下载必失败。改用 `aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip`
+   （跳 `download.visualstudio.microsoft.com`，直连可用）。
+2. **包名不是 `platforms;android-37`**：实际是 **`platforms;android-37.0`**（还有 37.1 / 37.2），
+   装到 `platforms\android-37.0` 目录。Tauri 生成的 Gradle 里是 `compileSdk = 37` / `targetSdk = 37`。
+3. **`sdkmanager` 需要 JDK 17**：本机默认 `java` 是 JDK 8，直接跑 `sdkmanager` 会抛
+   `ClassNotFoundException`。必须先把 `JAVA_HOME` 指向 JDK 17 再跑。
+4. **Git Bash 下 `reg add` / `reg query` 的 `/v` `/t` `/d` `/f` 会被 MSYS 当路径改写**，
+   报「无效语法」。用 `MSYS_NO_PATHCONV=1` 或 `//v` 写法（与 §1.5 同一个坑）。
+5. **桌面端专属插件在 Android 上没有 API**：`tauri-plugin-single-instance` 与
+   `tauri-plugin-autostart` 的 `init` / `MacosLauncher` 只在桌面端存在，
+   编 Android 目标时直接编译失败 → 需要 `#[cfg(desktop)]` 隔离。
+
+**当前唯一卡点：Windows 符号链接权限**。
+
+`tauri android build` 要把编好的 `.so` **符号链接**进 `app/src/main/jniLibs/<abi>/`。
+非管理员 + 未开开发者模式时失败：
+
+```text
+failed to build Android app: Failed to create a symbolic link ...
+Creation symbolic link is not allowed for this system.
+```
+
+已把开发者模式写进注册表（用户级，无需管理员）：
+
+```bash
+MSYS_NO_PATHCONV=1 reg add 'HKCU\Software\Microsoft\Windows\CurrentVersion\AppModelUnlock' \
+  /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f
+```
+
+但**该权限在登录时随 token 发放，写入注册表后当前会话仍无权限**
+（`whoami /priv` 看不到 `SeCreateSymbolicLinkPrivilege`，`mklink` 仍报「没有足够的权限」）。
+→ **需要注销后重新登录（或重启）**，权限才会生效。预置同名普通文件绕不过去
+（Tauri 每次都会重建符号链接）。以管理员身份跑一次也可以。
+
+**已验证可用的部分（2026-10-21）**：
+`tauri android init` 成功（自动识别 NDK 27.2.12479018）→
+`cargo build --target aarch64-linux-android` 成功，
+产物经 `file` 确认为 `ELF 64-bit LSB shared object, ARM aarch64`。
+即 **Rust × NDK × cargo-ndk × Gradle 整条链已通**，只差上面那个链接权限。
+
 ---
 
 ## 2. 目标平台差异
 
-### 2.1 平台支持状态（截至 2026-10-20）
+### 2.1 平台支持状态（截至 2026-10-21）
 
 | 平台 | 状态 | 证据 |
 |---|---|---|
 | **Windows** | ✅ 可编译可运行 | 本机构建通过；CI `windows-latest` 绿 |
 | **Linux (Ubuntu)** | ✅ **可编译**（运行未验证） | CI `ubuntu-latest` 绿，且 ubuntu job 编译了 tauri 应用本体 |
-| **Android** | ⛔ 本机不可构建 | 缺 JDK 17 + SDK/NDK |
+| **Android** | 🟡 **Rust 侧可交叉编译**；完整 APK 打包待符号链接权限 | 工具链已装（见 §1.8）；`aarch64-linux-android` 产物已验证为 ARM aarch64 ELF；APK 打包卡在 Windows 符号链接权限（需重登录） |
 | **macOS** | ❓ 未验证 | 本机无 macOS；CI 未覆盖 |
 | **iOS** | ❓ 未验证 | 需要 Apple 开发者账号 |
 
@@ -331,6 +396,89 @@ sandbox iframe + CSP + `srcdoc`。这些行为在 **WebKitGTK 上与 Chromium �
 
 → 这是一件好事：平台差异集中处理，不必在前端散落 `if (isWindows)`。
 
+### 2.6 Ubuntu 26.04 开发机准备清单
+
+> 面向“用 Ubuntu 26.04 机器开发”的场景。**包名与版本已对 Ubuntu 26.04 (resolute) 官方仓库核实**，
+> 标「未验证」的部分需在该机器上实测后回填。
+
+**发行版基线**：26.04 LTS "Resolute Raccoon"（2026-04-23 发布，支持到 2031-04）。
+
+| 工具链 | 24.04 | 26.04 | 对本项目的影响 |
+|---|---|---|---|
+| glibc | 2.39 | **2.43** | ⚠️ 决定 .deb 的兼容下限（见下） |
+| GCC | 13.2 | 15.2 | |
+| binutils | 2.42 | 2.46 | |
+| LLVM / Clang | 18 | **21.1** | `ring` / `bindgen` 需匹配 |
+| Python | 3.12 | **3.14** | CI docs job 用 `python3` |
+| Rust（发行版包） | 1.75 | **1.93.1** | 满足 `rust-version = 1.88`，但发行版包滞后 → 用 rustup |
+| OpenJDK（默认） | 21 | **25** | Android 工具链要 **17** → 额外装 `openjdk-17-jdk` |
+| Kernel / GNOME | | 7.0.0 / 50 | |
+
+**系统依赖**（包名已在 26.04 仓库核实存在）：
+
+```bash
+sudo apt update
+sudo apt install -y \
+  libwebkit2gtk-4.1-dev \
+  libgtk-3-dev \
+  libsoup-3.0-dev \
+  build-essential \
+  curl wget file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  patchelf \
+  xdg-utils \
+  openjdk-17-jdk
+```
+
+- `libwebkit2gtk-4.1-dev` 在 26.04 是 `2.52.6-0ubuntu0.26.04.1`，**Tauri v2 需要的正是 4.1 API** ✅
+  （24.04 也是 4.1；22.04 只有 4.0，不支持 Tauri v2）。
+- `libxdo-dev` 在 **universe** 仓库 → 先确认已启用：
+  `sudo add-apt-repository universe && sudo apt update`
+- `libayatana-appindicator3-dev` 26.04 是 `0.5.94-1build1`（main）✅
+- `librsvg2-dev` 26.04 是 `2.61.3+dfsg-3`（main）✅
+
+**Rust / Node**：
+
+```bash
+# Rust：用 rustup 固定版本，别用发行版包
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup component add clippy rustfmt
+rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+cargo install cargo-ndk --locked
+
+# Node：用 nvm / NodeSource 装 Node 22 LTS（项目用 npm + 已提交的 package-lock.json）
+```
+
+**Android（与 Windows 同一套，Linux 反而更顺）**：§1.8 的组件列表不变。
+Linux 上 Tauri 不需要 Windows 那个符号链接权限 → **不会遇到 §1.8 的卡点**。
+`ANDROID_HOME` / `NDK_HOME` 写进 `~/.bashrc`；注意 GUI 应用不继承 shell dotfiles
+（Tauri 官方用 `fix-path-env-rs` 处理，见其部署文档）。
+
+**CI 联动（重要，会自动发生）**：
+
+- `ubuntu-latest` **目前仍指向 24.04**；runner 镜像公告写的是
+  “`ubuntu-latest` label will use Ubuntu 26.04 in **November 2026**”。
+  → 迁移前把 CI 的 `runs-on: ubuntu-latest` **固定成 `ubuntu-24.04`**，
+  或先加一个 `ubuntu-26.04` 的 job 试跑再切换。
+- 26.04 runner 镜像已 GA（`ubuntu26/20261018.168`，OS 26.04.1 LTS），可直接用 `runs-on: ubuntu-26.04`。
+- **glibc 兼容下限**：Tauri 官方要求“用你要支持的最老系统构建”。
+  在 26.04（glibc 2.43）编出的 .deb 装到 22.04/24.04 会报
+  `GLIBC_2.xx not found`。→ 要发 .deb 就用 24.04 或容器构建。
+  （ROADMAP 把 Linux 列为可选 P5-L，**在用户明确提出需求前不投入**。）
+
+**WSL2 预演（Windows 本机可用）**：本机 WSL 已就绪（WSL 3.0.1.0 / 内核 6.18.40.1 /
+WSLg 1.0.79），`wsl --list --online` 里已有 `Ubuntu-26.04`：
+
+```bash
+wsl --install -d Ubuntu-26.04 --no-launch
+```
+
+但 **WSL ≠ 真机**：WebKitGTK 沙箱、通知、托盘、窗口行为的差异必须真机验证
+（[SECURITY §3](SECURITY.md) 要求在目标 WebView 上实测网络请求计数与 IPC 隔离）。
+
 ---
 
 ## 3. 写脚本 / CI 前的检查清单
@@ -340,7 +488,7 @@ sandbox iframe + CSP + `srcdoc`。这些行为在 **WebKitGTK 上与 Chromium �
 - [ ] 引号能扛住外层 shell 再解释一层吗？复杂逻辑改用脚本文件
 - [ ] 需要访问的网络目标在**目标环境**可达吗（代理 / DNS / 端口）？
 - [ ] 要访问 GitHub 吗？**先探明连通性再操作**，别直接 push（见 §1.5.1）
-- [ ] 依赖的本地工具装了吗（`filter-repo` / JDK 17 / SDK）？
+- [ ] 依赖的本地工具装了吗（`filter-repo` / JDK 17 / SDK / `cargo-audit`）？
 - [ ] 文档相对路径的层级对吗（见 §1.7）？
 - [ ] 平台差异是否影响这条命令/这段代码（见 §2.3）？
 
