@@ -30,6 +30,9 @@
 - [x] `xremail-crypto`：argon2id + ChaCha20-Poly1305 版本化密文封装（2026-10-22）；T3 用例 40 个。
 - [x] `xremail-api`：SecretStore / VaultStore / SyncBackend 契约 + 内存 mock（2026-10-22）；T4 用例 25 个。
 - [x] `xremail-sync`：UID 差分 / epoch 切换 / bit 意图合并三个纯函数模块（2026-10-22）；T2 用例 57 个。
+- [x] `xremail-api`：新增应用服务 DTO `NewAccountRequest`（校验 + 转领域对象，14 个用例）。
+- [x] shell：服务层 + 真实持久化链路 + React 账户列表（2026-10-22）；服务测试 10 + IPC 测试 8。
+- [ ] 实际 SQLite **接入应用**的剩余项：凭据录入（P1）、收发链路（P2/P3）。
 - [ ] 实际 SQLite **接入应用**（`list_accounts` 仍返回硬编码空列表）、真实账户列表、协议适配、收发链路。
 - [ ] 自动化业务测试与真实邮箱/Android 验收证据。
 
@@ -51,13 +54,24 @@
   - 口令错误与密文篡改返回**同一个**错误（分开就成了 oracle）
   - 头与 nonce 作为 AAD：元数据被改也会被发现
   - `rekey()` 提升 KDF 成本，旧封装仍能解开；`to_bytes`/`parse` 自包含字节格式供 L2 搬运
-- [ ] Command → 服务 → SQLite → React 真实列表，不以硬编码空列表验收。
+- [x] Command → 服务 → SQLite → React 真实列表，不以硬编码空列表验收（2026-10-22）
+  - `list_accounts` 改为真实查询；新增 `create_account` / `delete_account`
+  - 启动时解析数据目录（桌面 `%APPDATA%/com.xremail.app`，Android app 内部存储）、开库、**应用迁移**；
+    迁移失败则启动失败，不降级为空库
+  - 服务层 `apps/shell/src-tauri/src/service/`：校验 → 落库；**不认识 Tauri**，
+    发事件是 Command 的事（状态提交后才发）
+  - 前端：账户列表 + 新增表单 + 删除；不引新依赖（不用 TanStack/Tailwind）
+  - 事件作为**刷新提示**使用：收到 `account://added` 等事件后重新查询，不解析载荷
+  - 服务商只作标记，**服务器地址由用户手填**——163/QQ/沃 的参数尚未实测（R01/R02），
+    不能按品牌推定
+  - IPC 层测试 8 个：锁死 camelCase 线格式、参数校验、增删的完整链路
 - [x] 新库 / 迁移幂等重跑 / 事务整体回滚测试（**升级路径**待有第二个迁移后再补）
 - [x] 实际执行 fmt/clippy/test/typecheck/build（2026-10-22 本地全绿；CI 尚未跑绿）
 - [x] **测试用例扩写 T1–T4**：T1（迁移与事务）✅ 30 个、T3（密文封装）✅ 40 个、T4（L2 契约）✅ 25 个、**T2（同步纯函数）✅ 57 个**。见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
 
 **出口**：真实持久化链路与 mock 契约均有测试，明确哪些模块尚未创建。
-*当前状态：T1–T4 全部完成（Rust 用例 4 → 163），**真实列表**未完成，P0 未出关。*
+*当前状态：T1–T4 全部完成，真实列表已打通（Rust 用例 4 → 194）。**P0 已出关。**
+剩余：迁移升级路径测试（需第二个迁移）、跨表事务封装。*
 
 ### P1：国内邮箱只读接入
 

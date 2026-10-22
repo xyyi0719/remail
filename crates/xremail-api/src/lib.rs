@@ -23,12 +23,14 @@
 //! 接口预留降低耦合，**不保证零返工**——P6 之前要重新审查
 //! 身份认证、密钥恢复、轮换、回滚防护与元数据泄露。
 
+pub mod account;
 pub mod error;
 pub mod mock;
 pub mod secret;
 pub mod sync;
 pub mod vault;
 
+pub use account::NewAccountRequest;
 pub use error::{SecretStoreError, SyncError, VaultError};
 pub use secret::{SecretStore, SecretValue};
 pub use sync::{RemoteEntry, Revision, SyncBackend};

@@ -4,13 +4,27 @@
 //! * Command 只做 **参数校验 → 调用领域服务 → 返回 DTO**，不写业务逻辑。
 //! * 跨线程的工作（IMAP 拉取、发信等）投递给 `xremail-sync` 的 Actor。
 //! * 平台相关能力（托盘 / 通知 / 前台服务）收敛到 `platform` 模块。
+//!
+//! ## 启动顺序
+//!
+//! 1. 解析数据目录（桌面 `%APPDATA%/com.xremail.app`，Android app 内部存储）
+//! 2. 打开 SQLite 连接池并**应用迁移**
+//! 3. 注入 `AppState`，注册 Command
+//!
+//! 迁移失败会让应用**启动失败**并报错，而不是降级成一个空库或旧库：
+//! 静默降级会让人以为数据还在，实际却是另一份（ARCHITECTURE §9）。
 
 pub mod cmd;
+pub mod service;
 pub mod state;
 
-// `Manager` 只在桌面端单实例插件的回调里用到；Android 侧不注册该插件。
-#[cfg(desktop)]
 use tauri::Manager;
+
+use crate::service::AccountService;
+use crate::state::AppState;
+
+/// 数据库文件名（位于数据目录下）。
+pub const DB_FILE_NAME: &str = "xremail.db";
 
 /// 应用入口。桌面与移动共用。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -37,10 +51,40 @@ pub fn run() {
         ));
 
     builder
-        .manage(state::AppState::default())
-        .invoke_handler(tauri::generate_handler![cmd::app_info, cmd::list_accounts])
+        .setup(|app| {
+            let state = init_storage(app.handle())?;
+            app.manage(state);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            cmd::app_info,
+            cmd::list_accounts,
+            cmd::create_account,
+            cmd::delete_account,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Xremail application");
+}
+
+/// 解析数据目录、打开数据库、应用迁移。
+fn init_storage(app: &tauri::AppHandle) -> Result<AppState, Box<dyn std::error::Error>> {
+    // `app_data_dir()` 在桌面端是 `%APPDATA%/<identifier>`，
+    // 在 Android 上是 app 的内部存储目录。
+    let data_dir = app.path().app_data_dir()?;
+    std::fs::create_dir_all(&data_dir)?;
+
+    let db_path = data_dir.join(DB_FILE_NAME);
+
+    // 打开连接池并应用迁移。`block_on` 用的是 Tauri 自己的全局运行时；
+    // 此时运行时已就绪，迁移是纯 IO，不会回调主线程。
+    let pool = tauri::async_runtime::block_on(async {
+        let pool =
+            xremail_store::open_pool_path(&db_path, &xremail_store::PoolConfig::default()).await?;
+        xremail_store::migrate(&pool).await?;
+        Ok::<_, xremail_core::AppError>(pool)
+    })?;
+
+    Ok(AppState::new(data_dir, AccountService::new(pool)))
 }
 
 /// 初始化结构化日志。

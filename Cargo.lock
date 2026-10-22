@@ -5556,6 +5556,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "tokio",
+ "uuid",
  "xremail-core",
  "zeroize",
 ]
@@ -5588,15 +5589,20 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sqlx",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "tempfile",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+ "xremail-api",
  "xremail-core",
+ "xremail-store",
 ]
 
 [[package]]

@@ -322,6 +322,73 @@ MSYS_NO_PATHCONV=1 reg add 'HKCU\Software\Microsoft\Windows\CurrentVersion\AppMo
 产物经 `file` 确认为 `ELF 64-bit LSB shared object, ARM aarch64`。
 即 **Rust × NDK × cargo-ndk × Gradle 整条链已通**，只差上面那个链接权限。
 
+### 1.9 Tauri 桌面端在 Windows 上的两个坑（2026-10-22 踩到）
+
+#### 1.9.1 强杀应用会留下 WebView2 残留进程，导致下次启动失败
+
+用 `kill` / `taskkill` 结束 Tauri 应用时，**子进程 `msedgewebview2.exe` 不会被一起收掉**。
+它继续占着 WebView2 的用户数据目录
+（`%LOCALAPPDATA%/<identifier>/EBWebView`），下次启动时创建 webview 失败：
+
+```
+panicked at tauri-2.12.4/src/app.rs:1444: Failed to setup app:
+  runtime error: failed to create webview:
+  WebView2 error: WindowsError(Error { code: HRESULT(0x800700AA),
+  message: "请求的资源在使用中。" })
+```
+
+`0x800700AA` = `ERROR_BUSY`。
+
+**迷惑之处**：Tauri 的 `setup()` 内部是**先按 `tauri.conf.json` 建窗口、再跑用户的 setup 钩子**
+（见 `tauri-2.12.4/src/app.rs` 的 `fn setup`）。所以这个错误发生在**用户钩子之前**，
+看起来像"我的 setup 代码没跑"——实际上数据目录根本没被创建。
+排查时先确认应用逻辑是否执行，别被这个顺序误导。
+
+清理方式：
+
+```bash
+taskkill //F //IM msedgewebview2.exe
+```
+
+验证时每次跑完应用都要清，否则第二次必然失败。
+
+#### 1.9.2 测试二进制缺少 comctl32 v6 的 manifest
+
+`tauri::test`（`mock_builder` 等）会把 wry 整条链拉进测试二进制，
+于是测试二进制**静态导入** `comctl32.dll!TaskDialogIndirect`。
+该导出只有 comctl32 v6（SxS 版本）才有；`tauri-build` 只给**主程序**嵌入
+v6 的 manifest，测试二进制没有 → 加载器把 `comctl32.dll` 解析到
+System32 的 v5.82 → 找不到导出 → 进程以
+`STATUS_ENTRYPOINT_NOT_FOUND`（`0xC0000139`）退出，**测试一个都跑不了**。
+
+解法（见 `apps/shell/src-tauri/build.rs`）：把 comctl32 改成**延迟加载**，
+加载期就不再要求那个导出：
+
+```rust
+println!("cargo:rustc-link-arg-tests=/DELAYLOAD:comctl32.dll");
+println!("cargo:rustc-link-lib=delayimp");   // 提供 __delayLoadHelper2
+```
+
+`delayimp.lib` 不能少，否则链接期报 `LNK2001 无法解析的外部符号 __delayLoadHelper2`。
+
+#### 1.9.3 sqlx 连接池与创建它的运行时绑定
+
+sqlx 的连接池在**创建它的运行时**上工作。若在 `#[tokio::test]` 的 tokio 运行时里建池，
+而 Command 在 Tauri 自己的运行时上取连接，就会一直等不到连接，最终
+`pool timed out while waiting for an open connection`。
+
+在 `tauri::test` 里测 Command 时，**连接池要在 Tauri 的运行时上建**：
+
+```rust
+let pool = tauri::async_runtime::block_on(async {
+    let pool = open_pool_in_memory(&cfg).await?;
+    migrate(&pool).await?;
+    pool
+});
+```
+
+（这条与 §1.9.1/1.9.2 无关，是独立的一条。）
+
 ---
 
 ## 2. 目标平台差异

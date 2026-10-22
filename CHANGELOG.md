@@ -7,6 +7,26 @@
 ## [Unreleased]
 
 ### Added
+- **P0 出关：Command → 服务 → SQLite → React 真实列表**（不再返回硬编码空列表）
+  - 启动时解析数据目录（桌面 `%APPDATA%/com.xremail.app`，Android app 内部存储）、
+    打开连接池并**应用迁移**；迁移失败则启动失败——**不降级**为空库或旧库
+  - 服务层 `apps/shell/src-tauri/src/service/`：Command 只做「参数校验 → 调服务 → 返回 DTO」，
+    业务在服务层；服务层**不认识 Tauri**，发事件是 Command 的事（**状态提交后才发**）
+  - Command：`list_accounts`（真实查询）、`create_account`、`delete_account`
+  - `xremail-api` 新增应用服务 DTO `NewAccountRequest`：入参校验 + 转领域对象（14 个用例）
+  - 前端：账户列表 + 新增表单 + 删除；**不引新依赖**（未用 TanStack / Tailwind）
+  - 事件当**刷新提示**用：收到 `account://added` 等事件后重新查询，不解析载荷
+  - 服务商只作标记，**服务器地址由用户手填**：163/QQ/沃 的参数尚未实测（R01/R02），
+    不能按品牌推定
+- **IPC 层测试 8 个**（`tauri::test` 的 `mock_builder` + `get_ipc_response`）：
+  走真实 IPC 链路，**锁死 camelCase 线格式**（`displayName` / `imapPort` / `server.imapHost`）
+  - 这层测试当场抓到一个真 bug：`ServerConfig` 漏了 `rename_all`，
+    嵌套对象仍是 snake_case——已修 core
+- **服务层测试 10 个**：空库返回空数组、创建后可查回、校验失败不落半条记录、
+  更新不换 id、**关掉连接重新打开同一个文件数据仍在**（证明真的落盘）
+- **core 的过线结构体统一 camelCase**：`ServerConfig` / `Folder` / `Message` /
+  `Address` / `MessageBody` / `Attachment`（`Account` 已有）。
+  落库不这套命名——`xremail-store` 有自己的列映射，两边互不影响
 - **`xremail-sync` crate（P0 / T2，同步纯函数）**：UID 差分、epoch 切换计算、bit 意图合并
   - `UidSet` / `diff_uids`：算出「要拉取的」与「服务器已删的」，升序稳定输出
     - `UidDiff::retain_local`：本地草稿与未发送内容有**独立归属**，不能因为服务器上没有就被清掉
@@ -91,6 +111,15 @@
 - 文档作者/负责人署名为 xyyi0719
 
 ### Fixed
+- **Windows 上 `tauri::test` 的测试二进制无法启动**（`STATUS_ENTRYPOINT_NOT_FOUND`）
+  - 原因：测试二进制静态导入 `comctl32.dll!TaskDialogIndirect`（只有 v6 SxS 才有），
+    而 `tauri-build` 只给主程序嵌入 v6 manifest
+  - 解法：`apps/shell/src-tauri/build.rs` 把 comctl32 改为延迟加载
+    （`/DELAYLOAD:comctl32.dll` + 链接 `delayimp.lib`）
+- **Windows 上强杀 Tauri 应用会留下 `msedgewebview2.exe` 残留**，
+  导致下次启动报 `WebView2 0x800700AA 请求的资源在使用中`。
+  该错误发生在 Tauri 建窗口阶段（**早于用户的 setup 钩子**），
+  看起来像「setup 没跑」，容易误判——详见 [ENVIRONMENT §1.9](docs/ENVIRONMENT.md)
 - **桌面端专属插件在 Android 目标上编译失败**：`tauri-plugin-single-instance` 的 `init` 与 `tauri-plugin-autostart` 的 `init` / `MacosLauncher` 只在桌面端存在
   - `apps/shell/src-tauri/src/lib.rs`：两个插件用 `#[cfg(desktop)]` 隔离，`use tauri::Manager` 同步加门（Android 侧未用到，否则 clippy `-D warnings` 会报错）
   - 影响面：仅 Android 目标的编译；桌面端行为不变

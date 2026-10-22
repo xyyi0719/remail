@@ -11,6 +11,7 @@ authors.workspace = true
 xremail-core = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1", features = ["derive"] }
 
 # 异步 trait：平台 SecretStore 适配器（Windows Credential Manager /

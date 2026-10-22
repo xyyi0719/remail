@@ -130,6 +130,7 @@ pub enum SyncMode {
 
 /// One mailbox / directory endpoint pair.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
     pub imap_host: String,
     pub imap_port: u16,
@@ -160,7 +161,12 @@ impl ServerConfig {
 }
 
 /// A configured mail account.
+///
+/// **serde 命名**：对外（前端、事件载荷）用 camelCase。
+/// 落库时**不**用这套命名——`xremail-store` 有自己的列映射，
+/// 所以这里的 wire 格式与存储格式互不影响。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Account {
     pub id: String,
     pub email: String,
@@ -192,6 +198,7 @@ impl Account {
 
 /// A mailbox folder (`INBOX`, `Sent`, custom labels, ...).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: String,
     pub account_id: String,
@@ -227,6 +234,7 @@ impl Folder {
 
 /// An email address with an optional display name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Address {
     pub name: Option<String>,
     pub email: String,
@@ -321,6 +329,7 @@ impl MessageFlags {
 /// The body lives in a separate table (`message_body`) so that listing a
 /// folder never has to touch large text columns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: String,
     pub account_id: String,
@@ -370,6 +379,7 @@ pub enum SyncState {
 
 /// A message body, stored separately from its envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MessageBody {
     pub message_id: String,
     pub text_plain: Option<String>,
@@ -380,6 +390,7 @@ pub struct MessageBody {
 
 /// An attachment descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Attachment {
     pub id: String,
     pub message_id: String,

@@ -30,6 +30,9 @@ repository = "https://github.com/xyyi0719/xremail"
 [workspace.dependencies]
 xremail-core = { path = "crates/xremail-core" }
 xremail-store = { path = "crates/xremail-store" }
+xremail-crypto = { path = "crates/xremail-crypto" }
+xremail-api = { path = "crates/xremail-api" }
+xremail-sync = { path = "crates/xremail-sync" }
 
 anyhow = "1"
 thiserror = "2"

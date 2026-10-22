@@ -1,14 +1,28 @@
 //! 应用共享状态。
 //!
-//! 目前只承载启动期信息；数据库句柄、账户 Actor 注册表、事件发送器
-//! 会在 P1/P2 按需加入（见 [ARCHITECTURE §3](../../../../docs/ARCHITECTURE.md)）。
+//! 由 Tauri `manage` 注入。持有应用数据目录与各领域服务。
 
-/// 由 Tauri `manage` 注入的全局状态。
-#[derive(Debug, Default)]
+use std::path::PathBuf;
+
+use crate::service::AccountService;
+
+/// 应用共享状态。
+#[derive(Debug)]
 pub struct AppState {
     /// 数据目录（数据库、附件、日志的根目录）。
-    ///
-    /// P0 阶段先留空，P1 接入 `xremail-store` 时按平台解析：
-    /// Windows → `%APPDATA%/Xremail`，Android → app 内部存储。
-    pub data_dir: Option<std::path::PathBuf>,
+    pub data_dir: PathBuf,
+    /// 账户服务。
+    pub accounts: AccountService,
+}
+
+impl AppState {
+    /// 构造状态。
+    pub fn new(data_dir: PathBuf, accounts: AccountService) -> Self {
+        Self { data_dir, accounts }
+    }
+
+    /// 数据库文件路径。
+    pub fn database_path(&self) -> PathBuf {
+        self.data_dir.join(crate::DB_FILE_NAME)
+    }
 }

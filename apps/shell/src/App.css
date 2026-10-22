@@ -6,14 +6,21 @@
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-height: 100vh;
 }
 
 .app-shell {
-  max-width: 40rem;
-  padding: 2rem;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 2rem 2rem 4rem;
+}
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
 }
 
 .app-shell h1 {
@@ -29,12 +36,13 @@ body {
 
 .app-info {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 0.25rem 1rem;
-  margin: 1.5rem 0;
-  padding: 1rem 1.25rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
   border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
   border-radius: 0.75rem;
+  font-size: 0.875rem;
 }
 
 .app-info dt {
@@ -46,6 +54,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.app-info-path {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-error {
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
@@ -53,19 +68,168 @@ body {
   color: #b91c1c;
 }
 
+.app-ok {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+  color: #15803d;
+}
+
 .app-loading {
   opacity: 0.6;
 }
 
-.app-note {
-  margin-top: 2rem;
+/* ---------------------------------------------------------------- 面板 */
+
+.panel {
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 0.75rem;
+}
+
+.panel-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.panel-hint {
+  margin: 0 0 1rem;
   font-size: 0.875rem;
+  opacity: 0.65;
+}
+
+.panel-empty {
+  margin: 0;
   opacity: 0.6;
 }
 
-code {
-  padding: 0.1em 0.35em;
-  border-radius: 0.25rem;
-  background: color-mix(in srgb, currentColor 10%, transparent);
-  font-size: 0.9em;
+/* ---------------------------------------------------------------- 表单 */
+
+.account-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem 1rem;
+  align-items: end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.field-narrow {
+  max-width: 12rem;
+}
+
+.field > span {
+  opacity: 0.7;
+}
+
+.field input,
+.field select {
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.4rem;
+}
+
+.field input:focus-visible,
+.field select:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: 1px;
+}
+
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.form-actions button {
+  padding: 0.45rem 1.25rem;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.form-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- 列表 */
+
+.account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-item {
+  position: relative;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 0.6rem;
+}
+
+.account-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.account-email {
+  font-weight: 600;
+}
+
+.account-tag {
+  padding: 0.05rem 0.45rem;
+  font-size: 0.75rem;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 999px;
+}
+
+.account-tag-muted {
+  opacity: 0.7;
+}
+
+.account-detail {
+  margin-top: 0.3rem;
+  font-size: 0.8125rem;
+  opacity: 0.8;
+}
+
+.account-detail-muted {
+  opacity: 0.55;
+}
+
+.account-delete {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.account-delete:hover {
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+  color: #b91c1c;
 }
