@@ -17,7 +17,7 @@
   - 连接池：WAL、`busy_timeout`、**显式 `PRAGMA foreign_keys = ON`**（SQLite 默认不启用外键）、有界连接池
   - 错误分类：约束冲突（唯一键/外键/CHECK）映射为 `AppError::Invalid`（**不可重试**），其余 sqlx 错误映射为 `AppError::Storage`
 - **T1 测试用例 30 个**（`xremail-store` 单元 6 + 集成 24）：迁移建表、迁移幂等、外键确实生效、身份唯一约束、不同 epoch 相同 UID 共存、Message-ID 非唯一、复合外键、CHECK 约束、逐表删除策略、账户/文件夹往返、upsert 语义、未知枚举不静默回退、事务整体回滚、文件库重开可读
-  - Rust 用例总数：4（core）→ **34**
+  - Rust 用例总数：4（core）→ **34**（P0 阶段中间态，现为 99）
 - **sqlx 离线查询数据 `.sqlx/`**：SQL 查询在**编译期**对 schema 校验（列名、列数、类型、可空性），CI 无需起数据库
   - 已用反例验证：写错列名 / 列数不匹配 / 类型不匹配 / 可空性不匹配，四类均在编译期报错
 - **CI 新增「Verify sqlx offline data」步骤**：`cargo sqlx prepare --workspace --check` 校验 `.sqlx/` 与迁移/查询同步，过期即失败（已验证：故意改查询后返回 exit 1）

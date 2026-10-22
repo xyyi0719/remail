@@ -13,8 +13,8 @@
 > **v0.1.0 · P0 脚手架阶段**（2026-10）
 >
 > 工程骨架已生成，架构持续复核，协议与持久化业务尚未实现。当前设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-> 2026-10-22 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（34 个用例）/ `npm typecheck` / `npm build` 均通过。
-> 存储层（`xremail-store`）已落地：迁移、账户/文件夹 DAO、身份约束与 T1 测试已完成；**尚未接入应用**（`list_accounts` 仍返回硬编码空列表）。
+> 2026-10-22 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（99 个用例）/ `npm typecheck` / `npm build` 均通过。
+> 存储层（`xremail-store`）、密文封装（`xremail-crypto`）与 L2 契约（`xremail-api`）已落地；**尚未接入应用**（`list_accounts` 仍返回硬编码空列表）。
 > 想看进度：[docs/ROADMAP.md](docs/ROADMAP.md)
 
 | 状态 |
@@ -50,7 +50,7 @@
 └────────────────────────────────────────────────────────┘
 ```
 
-**目标架构：UI 经 Rust 服务查询 SQLite，持久化写入只走 Rust。** 事件用于刷新提示，漏事件后可重新查询；上图中除 core/store/shell 外的模块仍为规划。
+**目标架构：UI 经 Rust 服务查询 SQLite，持久化写入只走 Rust。** 事件用于刷新提示，漏事件后可重新查询；上图中除 core/store/crypto/api/shell 外的模块仍为规划。
 
 ---
 

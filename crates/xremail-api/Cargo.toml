@@ -1,0 +1,21 @@
+[package]
+name = "xremail-api"
+description = "Xremail application service contracts: secret store, vault and sync backend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+xremail-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { version = "1", features = ["derive"] }
+
+# 异步 trait：平台 SecretStore 适配器（Windows Credential Manager /
+# Android Keystore）需要在运行时才确定具体实现，因此契约必须 dyn 安全。
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true }

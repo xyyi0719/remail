@@ -1,0 +1,26 @@
+[package]
+name = "xremail-crypto"
+description = "Xremail cryptography: versioned secret envelope (argon2id KDF + AEAD)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+xremail-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+# KDF：口令 → 密钥。不自行实现密码算法，只做成熟库的封装
+# （见 ARCHITECTURE §2 对 xremail-crypto 的边界约定）。
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+
+# AEAD：ChaCha20-Poly1305。载荷自带认证标签，能发现篡改。
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
+
+# 随机数：盐与 nonce 必须来自 CSPRNG。
+rand = "0.9"
+
+# 密钥与明文在内存中的清理。
+zeroize = { version = "1", features = ["derive"] }

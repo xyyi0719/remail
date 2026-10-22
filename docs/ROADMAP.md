@@ -27,6 +27,8 @@
 - [x] 文档与 CI workflow 文件；测试策略/AI 工作规范已定义。
 - [x] `xremail-core` 错误分类单测 4 个（2026-10-20）。
 - [x] `xremail-store`：迁移 + 账户/文件夹 DAO + 身份约束（2026-10-22）；T1 用例 30 个。
+- [x] `xremail-crypto`：argon2id + ChaCha20-Poly1305 版本化密文封装（2026-10-22）；T3 用例 40 个。
+- [x] `xremail-api`：SecretStore / VaultStore / SyncBackend 契约 + 内存 mock（2026-10-22）；T4 用例 25 个。
 - [ ] 实际 SQLite **接入应用**（`list_accounts` 仍返回硬编码空列表）、真实账户列表、协议适配、收发链路。
 - [ ] 自动化业务测试与真实邮箱/Android 验收证据。
 
@@ -40,16 +42,21 @@
   - 迁移 `0001_init.sql`（10 张表）；身份不变量 `UNIQUE (account_id, folder_id, uidvalidity, uid)` 落到 schema
   - DAO：账户 upsert/list/get/delete，文件夹 upsert/list/get/delete
 - [ ] xremail-store：跨表事务封装（当前只有 schema 层的事务语义有测试，尚未提供多语句事务 API）
-- [ ] xremail-api：SecretStore、VaultStore、SyncBackend 最小契约与可运行 mock；CAS 冲突测试。
+- [x] xremail-api：SecretStore、VaultStore、SyncBackend 最小契约与可运行 mock；CAS 冲突测试（`crates/xremail-api`，2026-10-22）
+  - `SyncBackend` 只提供原子的 `compare_and_swap`，刻意不提供「先查后写」组合（TOCTOU）
+  - 双设备 / 三方 CAS 竞争：恰好一个赢家；另有用例证明 API 形状本身防住 TOCTOU
 - [x] L2 schema 预留：`local_secret` 只存版本化密文、`label` / `rule` 预留稳定 ID 与 schema version（迁移已就位）
-- [ ] 最小密码封装测试（`xremail-crypto`：argon2 KDF + AEAD 往返 / 篡改检测）
+- [x] 最小密码封装测试（`xremail-crypto`：argon2id + ChaCha20-Poly1305，40 个用例）
+  - 口令错误与密文篡改返回**同一个**错误（分开就成了 oracle）
+  - 头与 nonce 作为 AAD：元数据被改也会被发现
+  - `rekey()` 提升 KDF 成本，旧封装仍能解开；`to_bytes`/`parse` 自包含字节格式供 L2 搬运
 - [ ] Command → 服务 → SQLite → React 真实列表，不以硬编码空列表验收。
 - [x] 新库 / 迁移幂等重跑 / 事务整体回滚测试（**升级路径**待有第二个迁移后再补）
 - [x] 实际执行 fmt/clippy/test/typecheck/build（2026-10-22 本地全绿；CI 尚未跑绿）
-- [ ] **测试用例扩写 T1–T4**：T1（迁移与事务）✅ 30 个用例；T2 同步纯函数、T3 密文封装、T4 L2 契约未开始。见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
+- [ ] **测试用例扩写 T1–T4**：T1（迁移与事务）✅ 30 个、T3（密文封装）✅ 40 个、T4（L2 契约）✅ 25 个；T2 同步纯函数未开始。见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
 
 **出口**：真实持久化链路与 mock 契约均有测试，明确哪些模块尚未创建。
-*当前状态：T1 已完成，mock 契约与真实列表未完成，P0 未出关。*
+*当前状态：T1/T3/T4 已完成（Rust 用例 4 → 99），**真实列表**未完成，P0 未出关。*
 
 ### P1：国内邮箱只读接入
 
@@ -126,9 +133,10 @@ Gmail 将来有需求再开独立决策：授权流程、scope、个人使用与
 
 1. 用户准备 163 / QQ / 沃邮箱测试环境；凭据仅在本机配置。
 2. AI 实现只读 probe 与假服务器测试；用户本机授权后运行并记录证据。
-3. AI 按 ARCHITECTURE/TESTING_STRATEGY 实现最小存储与 L2 mock。
-4. 提前做有限 Android 生命周期验证，不等待完整 UI。
+3. AI 按 ARCHITECTURE/TESTING_STRATEGY 实现 T2（同步纯函数：UID 差分、epoch 切换、bit 意图合并）。
+4. 把存储层接进应用：Command → 服务 → SQLite → React 真实列表（`list_accounts` 仍是硬编码空列表）。
+5. 提前做有限 Android 生命周期验证，不等待完整 UI。
 
-本次用户选择的是文档与架构工作，以上编码任务尚未启动。每完成一个门槛再选择下一批，不将建议当作用户授权。
+第 3 批的「最小存储与 L2 mock」已完成（2026-10-22）。每完成一个门槛再选择下一批，不将建议当作用户授权。
 
 相关：[架构](ARCHITECTURE.md) · [风险](ISSUES_AND_RISKS.md) · [测试](TESTING_STRATEGY.md) · [AI 规范](AI_DEVELOPMENT_GUIDE.md)

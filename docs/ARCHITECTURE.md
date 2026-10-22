@@ -17,7 +17,7 @@
 
 ## 2. 模块与依赖
 
-当前只有 `xremail-core`、`xremail-store` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|
@@ -125,6 +125,12 @@ P0 按既定决策保留接口与 schema，但不建设远端服务：
 - `SyncBackend`：读取远端密文/revision；以 expected revision 条件提交，原子返回新 revision 或冲突。
 - 内存 mock 测试首次写、往返、双设备 CAS 竞争、错误返回；禁止独立 check_conflict 后无条件 push 的 TOCTOU 设计。
 - label/rule 等表预留稳定 ID、schema version 与必要生命周期字段；不提前冻结复杂 CRDT/同步协议。
+
+**实现落点（2026-10-22，`crates/xremail-api`）**：三个契约已建，内存 mock 可运行。
+`SyncBackend` **只提供原子的 `compare_and_swap`**，刻意不提供「先查冲突再推送」的组合方法——
+检查与推送之间状态可能已变，那会静默丢失更新（TOCTOU）。冲突错误 `SyncError::Conflict { current }`
+携带远端当前修订号，调用方据此重新读取并合并。`xremail-crypto` 提供版本化密文封装，
+其中 `to_bytes`/`parse` 是**自包含**字节格式，可作为不透明载荷在设备间搬运。
 
 P6 前重新审查身份认证、密钥恢复、轮换、回滚/重放防护与元数据泄露。接口预留降低耦合，不保证零返工。
 

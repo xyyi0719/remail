@@ -4,6 +4,8 @@ resolver = "3"
 members = [
     "crates/xremail-core",
     "crates/xremail-store",
+    "crates/xremail-crypto",
+    "crates/xremail-api",
     "apps/shell/src-tauri",
 ]
 
