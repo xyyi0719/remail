@@ -17,7 +17,7 @@
 
 ## 2. 模块与依赖
 
-当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync`、`xremail-protocol-imap` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|
@@ -65,6 +65,19 @@ RFC Message-ID 只能作线索，不能作为唯一键或自动跨文件夹去�
 5. 按阅读需求或缓存策略用 BODY.PEEK 拉正文/附件；正文到达与检索投影同事务更新。
 6. 比对服务器已删除 UID；删缓存必须尊重本地草稿/未发送内容的独立归属。
 7. 进入 IDLE 或轮询；所有请求有超时、资源上限和可取消边界。
+
+**实现落点（2026-10-22，`crates/xremail-protocol-imap`）**：第 1 步与第 2 步的实测结论已固化——
+
+
+* **服务器宣告 `ID` 能力时，登录后必须立即发一次 `ID`（RFC 2971）**。163 在不发 `ID` 时把
+  `EXAMINE` / `SELECT` 一律回成 `NO … Unsafe Login`，邮箱根本进不去。内容任意（`ID NIL` 除外）。
+* **能力集只能在认证后拿**：163 认证前拒绝一切 IMAP 命令，连 `LOGOUT` 都不行。
+* **邮箱名在线路上是 modified UTF-7**（RFC 3501 §5.1.3），不解码就认不出「已发送」；
+  实现在 `xremail-protocol-imap::utf7`。
+* **游标不能一律基于 UIDNEXT**：163 的 `STATUS` 接受 `UIDNEXT` 字段但**不给值**，
+  须用 `UID SEARCH` / `UID FETCH 1:*` 取最大 UID。
+* **不要无条件请求 `HIGHESTMODSEQ`**：不支持 CONDSTORE 的服务器（如 163）会回
+  `BAD Parse command error`。
 
 初次同步优先摘要与最近邮件，不默认下载全部附件。性能指标必须区分摘要、正文与附件。
 

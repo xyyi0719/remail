@@ -106,8 +106,113 @@
 | **无 `PIPELINING`** | ✅ 已实测 |
 | 994 端口在**隐式 TLS** 下也能握手成功，且仍宣告 `STARTTLS` | ✅ 已实测（**含义待确认**：994 究竟是明文 SMTP 端口还是也接受隐式 TLS，**一次观察不足以断言**，需用明文连一次对照） |
 
-**仍待实测**（需登录后）：IDLE / CONDSTORE / QRESYNC / UIDPLUS / `UID MOVE` 支持度、
-认证后 CAPABILITY 全集、文件夹结构、邮件头字符集抽样、并发连接上限。
+### 认证后实测记录（2026-10-22）
+
+> **环境**：Windows 11，本机；客户端为 **本项目的 `xremail-protocol-imap`**
+> （rustls 0.23 + async-imap 0.12）。这是**项目自己的客户端**的实测结论，
+> 与上面那段 Node 预探测相互印证。
+>
+> **凭据**：用户本机专用测试账号的客户端授权码，仅存在于
+> `%USERPROFILE%/.xremail/probe-163.txt`（**仓库之外**），全程未进 Git、未进日志。
+
+#### ⚠️ 最重要的发现：必须先发 `ID`（RFC 2971），否则进不去邮箱
+
+163（Coremail 体系）**认证前拒绝一切 IMAP 命令**（见上）。认证后还有第二道门：
+
+| 顺序 | 结果 |
+|---|---|
+| `LOGIN` → `EXAMINE INBOX` | ❌ `NO EXAMINE Unsafe Login. Please contact kefu@188.com for help` |
+| `LOGIN` → `SELECT INBOX` | ❌ `NO SELECT Unsafe Login. …` |
+| `LOGIN` → `NOOP` → `SELECT INBOX` | ❌ 仍然 Unsafe Login |
+| `LOGIN` → `CAPABILITY` → `SELECT INBOX` | ❌ 仍然 Unsafe Login |
+| `LOGIN` → `ID NIL` → `SELECT INBOX` | ❌ 仍然 Unsafe Login（`NIL` 不算自报身份） |
+| **`LOGIN` → `ID (...)` → `EXAMINE INBOX`** | ✅ `OK [READ-ONLY] Examine completed` |
+| **`LOGIN` → `ID (...)` → `SELECT INBOX`** | ✅ `OK [READ-WRITE] SELECT completed` |
+
+`ID` 的**内容不重要**：`("name" "X")`、`("version" "1.0")`、`("name" "")`
+都能通过；只要不是 `ID NIL` 就行。关键是**发过这个命令**。
+
+> **实现要求**：服务器宣告 `ID` 能力时，登录后必须立即发一次 `ID`，
+> 然后才能访问邮箱。本项目已在 `xremail-protocol-imap` 的
+> `connect_and_login` 里实现（见 `CLIENT_IDENTIFICATION`）。
+> 这条对**其他服务商也可能成立**，不能只当 163 的特例。
+
+#### 认证后能力集（完整）
+
+```
+IMAP4rev1  ID  LITERAL+  SASL-IR  SPECIAL-USE  STARTTLS  UIDPLUS
+AUTH=XOAUTH2  APPENDLIMIT=71680000
+X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
+```
+
+| 观察 | 说明 |
+|---|---|
+| 认证机制**只宣告 `AUTH=XOAUTH2`** | 但基础命令 `LOGIN` 可用——RFC 3501 的 `LOGIN` 本就不需要在 CAPABILITY 里宣告。163 的授权码走 `LOGIN`。 |
+| `APPENDLIMIT=71680000` | 单封邮件上限 ~68 MiB。**没有 `SIZE` 扩展**（SMTP 侧同样没有），发信不能靠 SIZE 预检。 |
+| `X-CM-EXT-1` / `XAPPLEPUSHSERVICE` / `XLIST` | 网易与苹果的私有扩展，不依赖。 |
+| 服务器自报 `ID` | `("name" "Coremail Imap" "vendor" "Mailtech" "TransID" "…")` |
+
+#### 扩展支持度（认证后实测）
+
+| 扩展 | 支持 | 对同步引擎的影响 |
+|---|---|---|
+| **IDLE** | ❌ | **只能用轮询**。ARCHITECTURE 的「实时模式」对 163 不成立 |
+| **CONDSTORE** | ❌ | 没有 `UNCHANGEDSINCE` 条件写 → 走 ARCH §6 的「读快照 + 重放本地意图 + 回读确认」路径 |
+| QRESYNC | ❌ | 与 CONDSTORE 一致 |
+| **UIDPLUS** | ✅ | `COPY` / `MOVE` 能拿到目标 UID 与 UIDVALIDITY |
+| **MOVE** | ❌ | 移动只能 `COPY` + `\Deleted` + `EXPUNGE`（与 PROTOCOLS 原有推测**一致**） |
+| LIST-EXTENDED | ❌ | 但 `SPECIAL-USE` 在，特殊用途属性**照样随 LIST 返回**（见下） |
+| NAMESPACE | ❌ | 没有层级声明，但 LIST 响应里的分隔符是 `/` |
+| UTF8=ACCEPT | ❌ | 不宣告；RFC 3501 默认就是 UTF-8 |
+| ID | ✅ | 但它是**准入条件**，不只是可选信息 |
+| QUOTA | ❌ | 查不到配额 |
+| LITERAL+ | ✅ | |
+| LITERAL- | ❌ | |
+
+#### 文件夹
+
+`LIST "" "*"` 返回 6 个，分隔符 `/`：
+
+| 特殊用途属性 | 解码后的名字 |
+|---|---|
+| （无） | `INBOX` |
+| `\Drafts` | 草稿箱 |
+| `\Sent` | 已发送 |
+| `\Trash` | 已删除 |
+| `\Junk` | 垃圾邮件 |
+| （无） | 病毒文件夹 |
+
+> **IMAP 邮箱名在线路上是 modified UTF-7**（RFC 3501 §5.1.3），
+> 例如「已发送」在线上是 `&XfJT0ZAB-`。**不解码就认不出角色**。
+> 本项目已在 `xremail-protocol-imap::utf7` 实现编解码（含 11 个用例）。
+>
+> 注意：163 **不给** `\All` / `\Archive` 之类的属性给「病毒文件夹」，
+> 也没有给「所有邮件」标 `\All`——角色识别不能只靠 `INBOX` 之外的猜测。
+
+#### 邮箱状态
+
+`EXAMINE INBOX`（只读）实测：
+
+```
+* 4 EXISTS
+* 1 RECENT
+* OK [UIDVALIDITY 1] UIDs valid
+* FLAGS (\Answered \Seen \Deleted \Draft \Flagged)
+* OK [PERMANENTFLAGS (\Answered \Seen \Deleted \Draft \Flagged)] Limited
+```
+
+| 观察 | 影响 |
+|---|---|
+| `UIDVALIDITY = 1` | epoch 很「年轻」，但**不能假定 UID 从 1 开始** |
+| **UID 实际是 1792658701 ~ 1792658704** | UID 空间很大，**不是** 1..N。差分逻辑不能假设连续 |
+| `PERMANENTFLAGS` **不含 `\Recent`** | 响应码是 `Limited`。客户端不能自己设 `\Recent`（本来也不该） |
+| `EXAMINE` **不报 `UNSEEN`** | 未读数必须用 `STATUS` 拿（`STATUS` 给 `UNSEEN 1`） |
+| **`UIDNEXT` 拿不到** | `STATUS INBOX (UIDNEXT)` 返回 `* STATUS "INBOX" ()`——字段被接受但**没有值**。⇒ 同步游标**不能**基于 UIDNEXT，要靠 `UID SEARCH` / `UID FETCH 1:*` 取最大 UID |
+| **`HIGHESTMODSEQ` 会让命令失败** | `STATUS INBOX (HIGHESTMODSEQ)` → `BAD Parse command error`（与不支持 CONDSTORE 一致）。**不要**无条件请求它 |
+| `STATUS` 可用的项 | `MESSAGES` `RECENT` `UNSEEN` `UIDVALIDITY` ✅；`UIDNEXT` 空；`HIGHESTMODSEQ` ❌ |
+
+**仍待实测**：邮件头字符集抽样（GBK/GB18030）、
+`BODY.PEEK` 是否真的不置 `\Seen`、并发连接上限、IDLE 不可用时的服务端行为。
 
 **已知坑**
 
@@ -247,7 +352,7 @@
 
 | 服务商 | IMAP IDLE | CONDSTORE | QRESYNC | UIDPLUS | 备注 |
 |---|---|---|---|---|---|
-| 163 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | |
+| 163 | ❌ **实测无** | ❌ **实测无** | ❌ **实测无** | ✅ 实测有 | **只能用轮询**；无 CONDSTORE → 走「快照+意图重放」；无 MOVE → COPY+\Deleted+EXPUNGE；**无 UIDNEXT** → 游标靠 UID SEARCH/FETCH 取最大 UID；**必须先发 `ID`** |
 | 126 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | |
 | QQ | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | |
 | 沃邮箱 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | Coxremail 体系 |

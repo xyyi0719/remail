@@ -30,6 +30,8 @@
 - [x] `xremail-crypto`：argon2id + ChaCha20-Poly1305 版本化密文封装（2026-10-22）；T3 用例 40 个。
 - [x] `xremail-api`：SecretStore / VaultStore / SyncBackend 契约 + 内存 mock（2026-10-22）；T4 用例 25 个。
 - [x] `xremail-sync`：UID 差分 / epoch 切换 / bit 意图合并三个纯函数模块（2026-10-22）；T2 用例 57 个。
+- [x] `xremail-protocol-imap`：IMAP 协议层 + 只读 probe（2026-10-22）；163 实测完成。
+  - **实测账本**：Rust 用例 194 → **212**（新增 18 个：utf7 11 + 凭据/脱敏 7）
 - [x] `xremail-api`：新增应用服务 DTO `NewAccountRequest`（校验 + 转领域对象，14 个用例）。
 - [x] shell：服务层 + 真实持久化链路 + React 账户列表（2026-10-22）；服务测试 10 + IPC 测试 8。
 - [ ] 实际 SQLite **接入应用**的剩余项：凭据录入（P1）、收发链路（P2/P3）。
@@ -75,14 +77,20 @@
 
 ### P1：国内邮箱只读接入
 
+- [x] **163：只读 probe 实测**（2026-10-22，`crates/xremail-protocol-imap`）
+  - 预认证：TLSv1.3、证书由公开 CA（DigiCert）签发、**系统根即可校验通过**
+  - 认证前**拒绝一切 IMAP 命令**（连 `LOGOUT` 都回 `BAD command not support`）
+  - **必须先发 `ID`（RFC 2971）**，否则 `EXAMINE` / `SELECT` 被回 `NO … Unsafe Login`
+  - **无 IDLE / 无 CONDSTORE / 无 MOVE / 无 UIDNEXT** ⇒ 只能轮询 + 「快照+意图重放」
+  - 邮箱名是 **modified UTF-7**，需解码（已实现 `xremail-protocol-imap::utf7`）
+  - 详细记录见 [PROTOCOLS.md 163 章](PROTOCOLS.md)
 - [ ] 沃邮箱：只读 probe 实测服务器地址与认证方式，不按品牌推定
-- [ ] 只读 probe：TLS、认证后 CAPABILITY、EXAMINE、摘要；记录失败阶段并脱敏。
-- [ ] 163 → QQ → 沃邮箱依次接入，保留手动配置和连接诊断。
-- [ ] 凭据适配、MIME/中文字符集测试、文件夹与摘要缓存。
-- [ ] **测试用例扩写 T5**（MIME / charset 解析，含 GBK/GB18030 样本）。
+- [ ] 凭据适配、MIME/中文字符集测试（GBK/GB18030）、按需正文/附件拉取
+- [ ] **测试用例扩写 T5**（MIME / charset 解析，含 GBK/GB18030 样本）
+- [ ] 假 IMAP 服务器（T7 前置）：先有假服务器，再上真服务器
 
 **出口**：三种真实账户各有实测记录；没有账号或配置时保留阻塞，不宣称完成。
-Gmail/OAuth 注册审核不再是当前关键路径；126、Exchange 不进入首轮必需范围。
+*当前状态：163 已实测（2026-10-22）。QQ 与沃邮箱未开始。*
 
 ### P2：可靠同步与安全阅读
 

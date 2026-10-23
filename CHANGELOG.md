@@ -40,6 +40,28 @@
     - 绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算
     - `MAX_REPLAN_ATTEMPTS = 3`：MODIFIED 后重新读取并重算的次数上限（重试有界）
   - 本阶段**只含纯函数**：无网络、无 IO，可直接在 CI 跑；账户调度与 IMAP 会话属 P2
+- **`xremail-protocol-imap` crate（P1，IMAP 协议层）**：rustls + async-imap，只读探测工具
+  - `connect_and_login`：隐式 TLS（强制校验系统根，**无**明文/跳过校验开关）→ LOGIN → **ID（RFC 2971）**
+  - `utf7`：IMAP 邮箱名的 **modified UTF-7** 编解码（RFC 3501 §5.1.3）——不解码就认不出「已发送」
+  - `probe`：**严格只读**探测（只发 LOGIN / CAPABILITY / ID / LIST / EXAMINE / STATUS / IDLE+DONE；
+    **绝不** STORE / MOVE / COPY / DELETE / EXPUNGE / APPEND，也不发 SMTP 邮件）
+  - 探测输出**脱敏**：不打印授权码、完整邮箱地址、邮件内容；文件夹按特殊用途属性判角色
+  - 凭据从**本机文件**读（仓库之外），不进命令行参数、不进日志
+- **P1 实测：163 邮箱（2026-10-22）**——两个足以改变设计的发现
+  - **必须先发 `ID`（RFC 2971）自报身份，否则进不去邮箱**：
+    不发 `ID` 时 `EXAMINE` / `SELECT` 一律被回 `NO … Unsafe Login`。
+    `ID NIL` 不算；内容任意（含空串）都算。已实现为「服务器宣告 `ID` 能力时登录后立即发送」
+  - **没有 IDLE、没有 CONDSTORE** ⇒ 163 只能用**轮询**，且 flag 写入要走
+    「读快照 + 重放本地意图 + 回读确认」路径（ARCHITECTURE §6）
+  - 另：**无 UIDNEXT**（`STATUS` 接受该字段但不给值）⇒ 同步游标不能基于 UIDNEXT；
+    **无 MOVE** ⇒ 移动走 `COPY` + `\Deleted` + `EXPUNGE`；
+    `EXAMINE` **不报 UNSEEN**（要用 `STATUS`）；请求 `HIGHESTMODSEQ` 会得到
+    `BAD Parse command error`（不要无条件请求）
+  - 邮箱名在线路上是 modified UTF-7（`&XfJT0ZAB-` = 已发送）
+  - UID 空间很大（实测 1792658701~1792658704，**不是** 1..N）
+  - 认证后能力集、文件夹特殊用途属性、永久标记（不含 `\Recent`）等已记入
+    [PROTOCOLS.md](docs/PROTOCOLS.md)；IDLE/CONDSTORE 矩阵的 163 行已从「待实测」改为实测结论
+  - Rust 用例总数 194 → **212**（新增 18 个：utf7 编解码 11 + 凭据读取/脱敏 7）
 - **T2 用例 57 个**（单元 47 + 场景 10）：首次同步 / 增量同步 / 服务器删除保留草稿 /
   epoch 变化重建并隔离旧意图 / 跨 epoch 作差是错的 / 本地视图合并 / 点了又取消不发命令 /
   MODIFIED 后按新快照重算 / 旧意图绝不发给服务器 / 只发变化的位
@@ -111,6 +133,8 @@
 - 文档作者/负责人署名为 xyyi0719
 
 ### Fixed
+- **`modified UTF-7` 编码器把 `&` 编成了 `&ACY-`**：RFC 3501 规定 `&` 必须写成 `&-`
+  （移位段为空），而不是当作普通字符进移位段。用例当场捕获，已修
 - **Windows 上 `tauri::test` 的测试二进制无法启动**（`STATUS_ENTRYPOINT_NOT_FOUND`）
   - 原因：测试二进制静态导入 `comctl32.dll!TaskDialogIndirect`（只有 v6 SxS 才有），
     而 `tauri-build` 只给主程序嵌入 v6 manifest

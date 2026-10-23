@@ -1,0 +1,29 @@
+//! Xremail IMAP 协议层。
+//!
+//! 职责边界（见 [ARCHITECTURE §2](../../../docs/ARCHITECTURE.md)）：
+//! * IMAP 会话、能力与命令结果。
+//! * **不写库**，**不决定重试**（那是 `xremail-sync` 的事）。
+//! * 不认识 Tauri，也不认识 UI。
+//!
+//! ## 安全约定
+//!
+//! * 只走隐式 TLS，强制校验服务端证书，**不提供**明文或跳过校验的开关
+//!   （见 [SECURITY §2.2](../../../docs/SECURITY.md)）。
+//! * 错误信息**不含**用户名或口令。
+//! * 探测流程严格只读（见 [`probe`]）。
+
+pub mod connection;
+pub mod error;
+pub mod probe;
+pub mod utf7;
+
+pub use connection::{ImapConfig, ImapStream, Session, TlsInfo, connect_and_login};
+pub use error::ProtocolError;
+pub use probe::{
+    ExtensionSupport, FolderSummary, MailboxSummary, ProbeConfig, ProbeReport, auth_mechanisms,
+    capability_names, extension_support, probe,
+};
+pub use utf7::{Utf7Error, decode as decode_utf7, encode as encode_utf7};
+
+/// 重新导出 async-imap 的能力类型，供调用方判断扩展支持度。
+pub use async_imap::types::Capabilities;

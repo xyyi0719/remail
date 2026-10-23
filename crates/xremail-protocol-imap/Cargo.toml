@@ -1,0 +1,32 @@
+[package]
+name = "xremail-protocol-imap"
+description = "Xremail IMAP protocol layer: session, capabilities and command results."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+xremail-core = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# IMAP 协议。
+# 必须选 `runtime-tokio`：默认的 `runtime-async-std` 会把 trait 换成
+# futures-io 的 AsyncRead/AsyncWrite，与本项目的 tokio 栈不兼容。
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
+imap-proto = "0.17"
+# async-imap 的公开 API 返回 futures 的 Stream，收集它需要 futures-util。
+futures-util = "0.3"
+
+# TLS：强制校验，不降级（SECURITY §2.2）。
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true }
