@@ -31,7 +31,7 @@
 - [x] `xremail-api`：SecretStore / VaultStore / SyncBackend 契约 + 内存 mock（2026-10-22）；T4 用例 25 个。
 - [x] `xremail-sync`：UID 差分 / epoch 切换 / bit 意图合并三个纯函数模块（2026-10-22）；T2 用例 57 个。
 - [x] `xremail-protocol-imap`：IMAP 协议层 + 只读 probe（2026-10-22）；163 实测完成。
-  - **实测账本**：Rust 用例 194 → **236**（新增 42 个：utf7 11 + 凭据/脱敏 7 + 假服务器端到端 10 + 其余）
+  - **实测账本**：Rust 用例 194 → **307**（新增 113 个）
 - [x] `xremail-testkit`：假 IMAP 服务器 + 故障注入（2026-10-22）；T7 前置已就位。
 - [x] `xremail-api`：新增应用服务 DTO `NewAccountRequest`（校验 + 转领域对象，14 个用例）。
 - [x] shell：服务层 + 真实持久化链路 + React 账户列表（2026-10-22）；服务测试 10 + IPC 测试 8。
@@ -92,7 +92,8 @@
   - [x] **已建** `crates/xremail-testkit`（2026-10-22）：可配置的假 IMAP 服务器
     （能力集、要求先发 ID、拒绝 EXAMINE、认证前拒绝一切命令、故障注入）+ 自签证书
   - [x] 协议层端到端测试 10 个（假服务器 × 真客户端）
-  - [ ] 补齐同步链路需要的命令：UID FETCH / UID SEARCH / UID STORE / 垃圾箱移动
+  - [x] 补齐同步链路命令：UID FETCH / UID SEARCH / UID STORE（2026-10-23）
+  - [ ] 补齐：COPY / MOVE（垃圾箱移动）、APPEND（发信）
 
 **出口**：三种真实账户各有实测记录；没有账号或配置时保留阻塞，不宣称完成。
 *当前状态：163 已实测（2026-10-22）。QQ 与沃邮箱未开始。*

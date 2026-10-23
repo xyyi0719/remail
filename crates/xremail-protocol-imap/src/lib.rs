@@ -12,12 +12,14 @@
 //! * 错误信息**不含**用户名或口令。
 //! * 探测流程严格只读（见 [`probe`]）。
 
+pub mod command;
 pub mod connection;
 pub mod credential;
 pub mod error;
 pub mod probe;
 pub mod utf7;
 
+pub use command::{CommandOutcome, FetchedMessage, run_checked};
 pub use connection::{
     ImapConfig, ImapStream, Session, TlsInfo, TlsTrust, connect_and_login, connect_and_login_with,
 };

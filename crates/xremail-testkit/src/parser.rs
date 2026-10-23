@@ -52,11 +52,22 @@ impl Command {
         quoted_values(&self.args)
     }
 
-    /// 第一个未加引号的词（如 `INBOX`）。
-    pub fn first_atom(&self) -> Option<&str> {
-        self.args
-            .split_whitespace()
-            .find(|token| !token.starts_with('"'))
+    /// 如果这是 `UID <子命令>` 形式，返回 `(子命令, 剩余参数)`。
+    ///
+    /// ```
+    /// use xremail_testkit::parser::Command;
+    /// let cmd = Command::parse("a1 UID FETCH 1:* (UID FLAGS)").unwrap();
+    /// let (sub, rest) = cmd.uid_subcommand().unwrap();
+    /// assert_eq!(sub, "FETCH");
+    /// assert_eq!(rest, "1:* (UID FLAGS)");
+    /// ```
+    pub fn uid_subcommand(&self) -> Option<(String, &str)> {
+        if self.name != "UID" {
+            return None;
+        }
+        let rest = self.args.trim();
+        let (sub, tail) = rest.split_once(char::is_whitespace)?;
+        Some((sub.to_ascii_uppercase(), tail.trim()))
     }
 }
 
@@ -148,13 +159,6 @@ mod tests {
     fn empty_line_is_not_a_command() {
         assert!(Command::parse("   ").is_none());
         assert!(Command::parse("").is_none());
-    }
-
-    #[test]
-    fn first_atom_skips_quoted() {
-        let cmd = Command::parse(r#"a6 EXAMINE "INBOX""#).unwrap();
-
-        assert_eq!(cmd.first_atom(), Some("INBOX"));
     }
 
     #[test]

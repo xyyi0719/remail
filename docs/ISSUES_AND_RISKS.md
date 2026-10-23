@@ -50,6 +50,7 @@
 | R12 | 可选扩展 | L2 接口过早冻结、远端冲突与密钥恢复未定义 | 中 | P0 最小契约 + mock；P6 前另做威胁模型，不承诺零返工 | 待实现 |
 | R13 | 运行平台 | release profile 用 `panic = "abort"`，后台同步任务 panic 会杀掉整个应用 | 中 | **已决策（2026-10-22）**：改为 `unwind`；配套要求后台 task 边界 `catch_unwind`，待 `xremail-sync` 落地时实现 | 已决策，待配套实现 |
 | R14 | 工程验证 | CI 无业务测试，静态检查通过不代表行为正确 | 高 | 按 [TESTING_STRATEGY §5](TESTING_STRATEGY.md) 的 T1–T10 顺序扩写用例；每阶段出口要求对应测试；用例数作为进度指标写入 CHANGELOG | 已开始 |
+| R15 | 协议层 | async-imap 0.12 **吞掉**服务器回的 `NO` / `BAD`：`uid_fetch` / `uid_store` / `uid_search` 在服务器拒绝时返回 `Ok`（只是结果为空），同步引擎会把「服务器拒绝了」当成「写成功了」，本地状态与远端悄悄分叉 | **高** | 新增安全命令层 `xremail_protocol_imap::run_checked`（自己读响应、自己判定 OK/NO/BAD，错误带 response code）；**同步引擎一律用它，不用 async-imap 的同名方法**；已用假服务器把该行为钉成用例 | 已缓解（待同步引擎接入时复核） |
 
 ## 4. 处理顺序
 

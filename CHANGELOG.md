@@ -40,6 +40,22 @@
     - 绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算
     - `MAX_REPLAN_ATTEMPTS = 3`：MODIFIED 后重新读取并重算的次数上限（重试有界）
   - 本阶段**只含纯函数**：无网络、无 IO，可直接在 CI 跑；账户调度与 IMAP 会话属 P2
+- **假 IMAP 服务器补齐同步链路命令**：`UID FETCH` / `UID SEARCH` / `UID STORE`
+  - 假服务器有了**共享可变状态**：`STORE` 改完，后续 `FETCH` / `SEARCH` 能看到
+  - `sequence` 模块：sequence set 解析（`1:10,15,20:*`）——**在服务端**，
+    因为客户端（async-imap）是把 sequence set 当**原始字符串**发的
+  - `search` 模块：搜索键解析与求值（标记类 / `UID` / 头字段 / 正文 / `NOT` / `OR` / 日期）
+  - `fetch` 模块：取件项解析（`UID` / `FLAGS` / `RFC822.SIZE` / `BODY[HEADER.FIELDS (...)]` / `ENVELOPE`）
+    与 `STORE` 参数解析（`+FLAGS` / `-FLAGS` / `.SILENT` / `UNCHANGEDSINCE`）
+  - 完整实现 IMAP 状态机：未选中邮箱时 `FETCH` / `SEARCH` / `STORE` 都会被拒；
+    `EXAMINE` 打开的只读邮箱拒绝 `STORE`
+  - `BODY[...]`（不带 PEEK）会**置上 `\Seen`**，`BODY.PEEK[...]` 不会
+  - 条件写 `UNCHANGEDSINCE (<modseq>)`：**全有或全无**——
+    只要有一封的 modseq 对不上，整条命令都不改任何东西
+- **`xremail-protocol-imap` 的安全命令层** `run_checked`（**重要**）
+  - 自己跑命令、自己读响应、自己判定 `OK` / `NO` / `BAD`
+  - 服务器回 `NO` / `BAD` 时**一定**返回错误
+  - 错误信息里带上 response code（`[READ-ONLY]` / `[MODIFIED]` / …）
 - **`xremail-testkit` crate（T7 前置，假 IMAP 服务器）**：协议层的测试**不再依赖真实邮箱**
   - 真邮箱只能复现**一种**情况；假服务器把各家服务商的怪癖做成**开关**，在 CI 里全部跑一遍
   - `ServerConfig`：能力集、`require_id`（163 式的“先发 ID”）、
@@ -147,6 +163,29 @@
 - 文档作者/负责人署名为 xyyi0719
 
 ### Fixed
+- **`1:*` 被展开成上亿个元素**（假服务器内存爆掉，8 GiB 分配失败）：
+  sequence set 的 `resolve` 是**展开**语义，而 `1:*` 在大 UID 空间下
+  （163 的 UID 就是 17 亿量级）会覆盖上亿个 UID。
+  现在假服务器**不展开 set**，而是拿每封邮件去问 `contains`；
+  `resolve` 保留但注明「不要在大 UID 空间下用」
+- **async-imap 0.12 会吞掉服务器回的 `NO` / `BAD`**（**严重**）：
+  `uid_fetch` / `uid_store` / `uid_search` 在服务器拒绝时**返回 `Ok`**，
+  只是结果为空。后果是同步引擎会把「服务器拒绝了」当成「写成功了」，
+  本地状态与远端悄悄分叉。
+  根因：库的响应解析用 `take_while(filter(...))` 读响应，而 `filter` 遇到
+  **自己那个 tag** 的 `Done` 响应时返回 `false`——那个携带 `NO` 的响应
+  于是**从未被解析成错误**就被丢弃。
+  本项目的对策：新增 `run_checked` 安全命令层，并在测试里把这个行为钉住
+- **上一批的“用例数统计脚本”有 bug**：用 `awk -F'[ ;]'` 取 `$6`，
+  而 `passed; 1 failed` 之间的 `"; "` 会切出一个**空字段**，
+  于是失败数**恒为 0**。因此上一批报的“六关全绿”里其实有 1 个用例是失败的
+  （`xremail-testkit` 的 `first_atom_skips_quoted`）。
+  对策：改用 `target/gates.sh`，它**看退出码**而不是看打印出来的数字
+- **`xremail-testkit` 的 `first_atom` 是死 API**：没有任何调用点，
+  且它的测试断言与文档描述相反（文档说“第一个未加引号的词”，
+  测试却期望带引号时也返回它）——该测试从一开始就是失败的。直接删除
+- **`MessageFixture` 的头字段替换会把头与正文之间的空行弄丢**，
+  导致 `header()` 只能看到第一个头字段
 - **登录失败被一律当成“密码错了”**：网络抖动导致的连接断开也是 `Auth` 错误，
   会让用户反复检查一个根本没问题的密码，也让重试策略失效。
   现在按 async-imap 的错误变体分类：`NO` → 认证失败（需用户处理）、

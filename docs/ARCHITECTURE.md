@@ -26,8 +26,7 @@
 | xremail-store | SQLite、迁移、事务、检索投影、操作队列 | 不发网络请求 |
 | xremail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试 |
 | xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once |
-| xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/core，不认识 Tauri |
-| xremail-message | MIME/charset、构建、HTML 清洗 | 不直接落库或加载远程资源 |
+| xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/core，不认识 Tauri || xremail-message | MIME/charset、构建、HTML 清洗 | 不直接落库或加载远程资源 |
 | xremail-provider | 可覆盖预设、接入诊断 | 企业邮箱需管理员配置，不能按品牌猜服务器 |
 | xremail-crypto | 成熟密码库封装、版本化密文格式 | 不自行实现密码算法；不承担所有平台钥匙串职责 |
 | 平台 SecretStore 适配器 | Windows/Android 等安全存储 | 与可选远端 VaultStore 分离 |
@@ -36,6 +35,22 @@
 
 依赖基线：`shell → 应用服务/编排 → store、protocol、message、provider → core`。
 trait 放在使用方或低层契约模块；不因“只有 trait”就允许产生环。密钥存储与 vault 同步不是同一接口。
+
+### 2.1 协议层硬规则：命令必须自证成败
+
+**同步引擎一律用 `xremail_protocol_imap::run_checked`，不得直接用 async-imap 的
+`uid_fetch` / `uid_store` / `uid_search`。**
+
+原因：async-imap 0.12 在服务器回 `NO` / `BAD` 时**返回 `Ok`**（只是结果为空）。
+它的响应解析用 `take_while(filter(...))`，而 `filter` 遇到**自己那个 tag** 的
+`Done` 响应时返回 `false`——那个携带 `NO` 的响应于是**从未被解析成错误**就被丢弃。
+
+后果：同步引擎会把「服务器拒绝了」当成「写成功了」，本地状态与远端悄悄分叉。
+`run_checked` 自己跑命令、自己读响应、自己判定 `OK` / `NO` / `BAD`，
+并在错误里带上 response code（`[READ-ONLY]` / `[MODIFIED]` / …）。
+
+这条规则同时是 §6「读快照 → 重放意图 → **回读确认**」的前提：
+连「写有没有成功」都读不出来，就谈不上确认。
 
 ## 3. 运行时与连接所有权
 

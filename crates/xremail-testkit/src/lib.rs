@@ -27,10 +27,16 @@
 
 pub mod certificate;
 pub mod config;
+pub mod fetch;
 pub mod parser;
+pub mod search;
+pub mod sequence;
 pub mod server;
 
 pub use certificate::{CertError, ServerCertificate};
 pub use config::{Fault, MailboxFixture, MessageFixture, ServerConfig};
+pub use fetch::{BodySection, FetchItem, StoreOperation, StoreRequest, parse_fetch, parse_store};
 pub use parser::Command;
+pub use search::SearchKey;
+pub use sequence::SequenceSet;
 pub use server::{FakeImapServer, ServerError};
