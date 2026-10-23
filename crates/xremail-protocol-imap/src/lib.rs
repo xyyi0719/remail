@@ -13,11 +13,17 @@
 //! * 探测流程严格只读（见 [`probe`]）。
 
 pub mod connection;
+pub mod credential;
 pub mod error;
 pub mod probe;
 pub mod utf7;
 
-pub use connection::{ImapConfig, ImapStream, Session, TlsInfo, connect_and_login};
+pub use connection::{
+    ImapConfig, ImapStream, Session, TlsInfo, TlsTrust, connect_and_login, connect_and_login_with,
+};
+pub use credential::{
+    AccountCredential, CredentialError, CredentialStore, default_accounts_path, mask_user,
+};
 pub use error::ProtocolError;
 pub use probe::{
     ExtensionSupport, FolderSummary, MailboxSummary, ProbeConfig, ProbeReport, auth_mechanisms,

@@ -1,12 +1,12 @@
 //! 只读 IMAP 探测工具。
 //!
-//! **严格只读**：只执行 LOGIN / CAPABILITY / LIST / EXAMINE / IDLE+DONE。
+//! **严格只读**：只执行 LOGIN / CAPABILITY / ID / LIST / EXAMINE / STATUS / IDLE+DONE。
 //! 绝不执行 STORE / MOVE / COPY / DELETE / EXPUNGE / APPEND，也不发 SMTP 邮件。
 //!
 //! ## 凭据处理
 //!
-//! 凭据从**本机文件**读取，路径由 `--credentials` 或环境变量
-//! `XREMAIL_PROBE_CREDENTIALS` 给出，默认 `%USERPROFILE%/.xremail/probe-163.txt`。
+//! 凭据从**本机文件**读取（`%USERPROFILE%/.xremail/accounts.txt`），
+//! 按 `[provider]` 段落选择账号。
 //!
 //! * 凭据**不会**出现在命令行参数里（命令行参数会进 shell 历史）。
 //! * 凭据**不会**出现在本程序的任何输出里。
@@ -15,88 +15,33 @@
 //! 用法：
 //!
 //! ```text
-//! cargo run -p xremail-protocol-imap --bin xremail-imap-probe -- \
-//!     --host imap.163.com --mailbox INBOX
+//! cargo run -p xremail-protocol-imap --bin xremail-imap-probe -- --list
+//! cargo run -p xremail-protocol-imap --bin xremail-imap-probe -- --provider 163
 //! ```
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use xremail_protocol_imap::{ImapConfig, ProbeConfig};
-
-/// 默认凭据文件位置。
-fn default_credentials_path() -> PathBuf {
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".xremail").join("probe-163.txt")
-}
-
-/// 从文件读凭据。
-///
-/// 只接受 `key=value` 行；忽略空行与 `#` 注释。
-/// **不打印**任何值。
-fn read_credentials(path: &PathBuf) -> Result<(String, String), String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("读取凭据文件失败 ({}): {e}", path.display()))?;
-
-    let mut user = None;
-    let mut password = None;
-
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let value = value.trim().to_string();
-        match key.trim().to_ascii_lowercase().as_str() {
-            "user" => user = Some(value),
-            "password" => password = Some(value),
-            _ => {}
-        }
-    }
-
-    match (user, password) {
-        (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => Ok((u, p)),
-        (Some(_), Some(_)) => Err("凭据文件里有空值".into()),
-        (None, _) => Err("凭据文件缺少 user 行".into()),
-        (_, None) => Err("凭据文件缺少 password 行".into()),
-    }
-}
-
-/// 脱敏后的账号标识：首字符 + 域名。
-///
-/// 用于在报告里区分是哪个账号，**不暴露**完整地址。
-fn mask_user(user: &str) -> String {
-    match user.split_once('@') {
-        Some((local, domain)) => {
-            let head: String = local.chars().take(1).collect();
-            format!("{head}***@{domain}")
-        }
-        None => "***".to_string(),
-    }
-}
+use xremail_protocol_imap::{CredentialStore, ImapConfig, ProbeConfig};
 
 struct Args {
     host: String,
     port: u16,
     mailbox: String,
     credentials: PathBuf,
+    provider: String,
     try_idle: bool,
+    list_only: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut host = "imap.163.com".to_string();
     let mut port = 993u16;
     let mut mailbox = "INBOX".to_string();
-    let mut credentials = std::env::var_os("XREMAIL_PROBE_CREDENTIALS")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_credentials_path);
+    let mut credentials = xremail_protocol_imap::default_accounts_path();
+    let mut provider = "163".to_string();
     let mut try_idle = true;
+    let mut list_only = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -114,8 +59,14 @@ fn parse_args() -> Result<Args, String> {
             "--credentials" => {
                 credentials = PathBuf::from(args.next().ok_or("--credentials 缺少取值")?);
             }
+            "--provider" => {
+                provider = args.next().ok_or("--provider 缺少取值")?;
+            }
             "--no-idle" => {
                 try_idle = false;
+            }
+            "--list" => {
+                list_only = true;
             }
             "-h" | "--help" => {
                 println!("{HELP}");
@@ -130,20 +81,24 @@ fn parse_args() -> Result<Args, String> {
         port,
         mailbox,
         credentials,
+        provider,
         try_idle,
+        list_only,
     })
 }
 
 const HELP: &str = "\
 用法：xremail-imap-probe [选项]
 
-  --host <主机名>          默认 imap.163.com
-  --port <端口>            默认 993（隐式 TLS）
-  --mailbox <邮箱名>       默认 INBOX
-  --credentials <文件>     默认 %USERPROFILE%/.xremail/probe-163.txt
-  --no-idle                不试 IDLE
+  --list                     只列出凭据文件里已配置的 provider
+  --provider <标识>          用哪个账号（对应文件里的 [段落名]），默认 163
+  --host <主机名>            默认 imap.163.com
+  --port <端口>              默认 993（隐式 TLS）
+  --mailbox <邮箱名>         默认 INBOX
+  --credentials <文件>       默认 %USERPROFILE%/.xremail/accounts.txt
+  --no-idle                  不试 IDLE
 
-只读探测：只执行 LOGIN / CAPABILITY / LIST / EXAMINE / IDLE+DONE。
+只读探测：只执行 LOGIN / CAPABILITY / ID / LIST / EXAMINE / STATUS / IDLE+DONE。
 不会修改服务端任何状态，也不会发信。
 ";
 
@@ -157,10 +112,34 @@ async fn main() -> ExitCode {
         }
     };
 
-    let (user, password) = match read_credentials(&args.credentials) {
-        Ok(pair) => pair,
+    let store = match CredentialStore::read_from_file(&args.credentials) {
+        Ok(store) => store,
         Err(e) => {
             eprintln!("{e}");
+            eprintln!("凭据文件位置: {}", args.credentials.display());
+            eprintln!("模板见同目录的 accounts.template");
+            return ExitCode::from(2);
+        }
+    };
+
+    if args.list_only {
+        println!("凭据文件: {}", args.credentials.display());
+        if store.is_empty() {
+            println!("（没有配置任何账号）");
+        } else {
+            for provider in store.providers() {
+                let account = store.get(provider).unwrap();
+                println!("- {provider:<8} {}", account.masked_user());
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    let credential = match store.get(&args.provider) {
+        Ok(credential) => credential,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("已配置的 provider: {:?}", store.providers());
             return ExitCode::from(2);
         }
     };
@@ -177,13 +156,24 @@ async fn main() -> ExitCode {
     println!("# Xremail IMAP 只读探测报告");
     println!();
     println!("- 目标       : {}:{}", args.host, args.port);
-    println!("- 账号       : {}", mask_user(&user));
+    println!("- provider   : {}", args.provider);
+    println!("- 账号       : {}", credential.masked_user());
     println!("- 凭据来源   : {}", args.credentials.display());
     println!("- 检查邮箱   : {}", args.mailbox);
     println!("- 客户端     : xremail-protocol-imap（rustls + async-imap）");
     println!();
 
-    match xremail_protocol_imap::probe(&config, &user, &password).await {
+    let password = match credential.password.as_str() {
+        Some(password) => password,
+        None => {
+            eprintln!("授权码不是合法的 UTF-8 文本");
+            return ExitCode::from(2);
+        }
+    };
+
+    let result = xremail_protocol_imap::probe(&config, &credential.user, password).await;
+
+    match result {
         Ok(report) => {
             print_report(&report);
             ExitCode::SUCCESS
@@ -353,76 +343,4 @@ fn print_report(report: &xremail_protocol_imap::ProbeReport) {
 /// 是 / 否。
 fn yn(value: bool) -> &'static str {
     if value { "✅" } else { "❌" }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_user_and_password() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("creds.txt");
-        std::fs::write(&path, "user=a@163.com\npassword=abcd1234\n").unwrap();
-
-        let (user, password) = read_credentials(&path).unwrap();
-
-        assert_eq!(user, "a@163.com");
-        assert_eq!(password, "abcd1234");
-    }
-
-    #[test]
-    fn ignores_comments_and_blank_lines() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("creds.txt");
-        std::fs::write(
-            &path,
-            "# 注释\n\nuser=a@163.com\n\n  password = abcd1234  \n",
-        )
-        .unwrap();
-
-        let (user, password) = read_credentials(&path).unwrap();
-
-        assert_eq!(user, "a@163.com");
-        assert_eq!(password, "abcd1234");
-    }
-
-    #[test]
-    fn missing_password_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("creds.txt");
-        std::fs::write(&path, "user=a@163.com\n").unwrap();
-
-        assert!(read_credentials(&path).is_err());
-    }
-
-    #[test]
-    fn empty_value_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("creds.txt");
-        std::fs::write(&path, "user=a@163.com\npassword=\n").unwrap();
-
-        assert!(read_credentials(&path).is_err());
-    }
-
-    #[test]
-    fn missing_file_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nope.txt");
-
-        assert!(read_credentials(&path).is_err());
-    }
-
-    #[test]
-    fn mask_user_hides_the_local_part() {
-        let masked = mask_user("someone@163.com");
-
-        assert_eq!(masked, "s***@163.com");
-        assert!(!masked.contains("someone"), "脱敏后不能出现完整本地部分");
-    }
-
-    #[test]
-    fn mask_user_handles_a_missing_at_sign() {
-        assert_eq!(mask_user("garbage"), "***");
-    }
 }

@@ -13,7 +13,7 @@
 > **v0.1.0 · P0 脚手架阶段**（2026-10）
 >
 > 工程骨架已生成，架构持续复核，协议与持久化业务尚未实现。当前设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-> 2026-10-22 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（212 个用例）/ `npm typecheck` / `npm build` 均通过。
+> 2026-10-22 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（236 个用例）/ `npm typecheck` / `npm build` 均通过。
 > 存储层（`xremail-store`）、密文封装（`xremail-crypto`）、L2 契约（`xremail-api`）与同步纯函数（`xremail-sync`）已落地；**尚未接入应用**（`list_accounts` 仍返回硬编码空列表）。
 > 想看进度：[docs/ROADMAP.md](docs/ROADMAP.md)
 

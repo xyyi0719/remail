@@ -40,6 +40,20 @@
     - 绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算
     - `MAX_REPLAN_ATTEMPTS = 3`：MODIFIED 后重新读取并重算的次数上限（重试有界）
   - 本阶段**只含纯函数**：无网络、无 IO，可直接在 CI 跑；账户调度与 IMAP 会话属 P2
+- **`xremail-testkit` crate（T7 前置，假 IMAP 服务器）**：协议层的测试**不再依赖真实邮箱**
+  - 真邮箱只能复现**一种**情况；假服务器把各家服务商的怪癖做成**开关**，在 CI 里全部跑一遍
+  - `ServerConfig`：能力集、`require_id`（163 式的“先发 ID”）、
+    `reject_examine`、初始文件夹与邮件、UIDVALIDITY
+  - `Fault`：登录后断连 / 对某命令不响应（客户端超时）/ 拒绝某命令 / 认证失败
+  - 自签证书：真实客户端不可能信任它，测试要**显式**把那一张 CA 交给客户端
+    （`TlsTrust::Roots`）；生产路径始终用系统根，**没有**跳过校验的开关
+  - **认证前拒绝一切命令**（连 `LOGOUT` 都回 `BAD`）——复现 163
+  - 文件夹名按 **modified UTF-7** 编码上线（`&XfJT0ZAB-` = 已发送）
+- **本机测试账号库**（`%USERPROFILE%\.xremail\accounts.txt`，**仓库之外**）
+  - 分段格式：`[163]` / `[qq]` / `[wo]` / …，每段 `user` + `password`
+  - 配套模板 `accounts.template`（含各服务商的**开启路径与申请入口**）
+  - 探测工具新增 `--list`（只列已配置的 provider，账号脱敏）与 `--provider`
+  - 授权码用 `SecretValue` 包着：丢弃时清零，`Debug` 不打印内容
 - **`xremail-protocol-imap` crate（P1，IMAP 协议层）**：rustls + async-imap，只读探测工具
   - `connect_and_login`：隐式 TLS（强制校验系统根，**无**明文/跳过校验开关）→ LOGIN → **ID（RFC 2971）**
   - `utf7`：IMAP 邮箱名的 **modified UTF-7** 编解码（RFC 3501 §5.1.3）——不解码就认不出「已发送」
@@ -133,6 +147,10 @@
 - 文档作者/负责人署名为 xyyi0719
 
 ### Fixed
+- **登录失败被一律当成“密码错了”**：网络抖动导致的连接断开也是 `Auth` 错误，
+  会让用户反复检查一个根本没问题的密码，也让重试策略失效。
+  现在按 async-imap 的错误变体分类：`NO` → 认证失败（需用户处理）、
+  `IO` / `ConnectionLost` → 传输故障（**可重试**）、`BAD` / 解析失败 → 协议层问题
 - **`modified UTF-7` 编码器把 `&` 编成了 `&ACY-`**：RFC 3501 规定 `&` 必须写成 `&-`
   （移位段为空），而不是当作普通字符进移位段。用例当场捕获，已修
 - **Windows 上 `tauri::test` 的测试二进制无法启动**（`STATUS_ENTRYPOINT_NOT_FOUND`）

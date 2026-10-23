@@ -38,6 +38,15 @@ impl SecretValue {
         &self.0
     }
 
+    /// 取出 UTF-8 字符串。
+    ///
+    /// 返回 `None` 表示内容不是合法 UTF-8。
+    /// **不**做有损转换——那会静默改掉凭据。
+    /// 返回的是内部缓冲的借用，**不产生副本**（副本会绕过零化）。
+    pub fn as_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.0).ok()
+    }
+
     /// 取出字节副本。
     pub fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()

@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 xremail-core = { workspace = true }
+xremail-api = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
@@ -28,5 +29,7 @@ rustls-native-certs = "0.8"
 tokio = { workspace = true }
 
 [dev-dependencies]
+# 端到端测试用假 IMAP 服务器（见 tests/fake_server.rs）。
+xremail-testkit = { path = "../xremail-testkit" }
 tempfile = "3"
 tokio = { workspace = true }

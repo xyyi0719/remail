@@ -84,18 +84,47 @@ pub struct TlsInfo {
     pub verified: bool,
 }
 
+/// TLS 信任来源。
+///
+/// 生产只用 [`TlsTrust::SystemRoots`]：服务端证书由公开 CA 签发，
+/// 校验失败就是失败，**不提供**「跳过校验」的开关
+/// （见 [SECURITY §2.2](../../../docs/SECURITY.md)）。
+///
+/// [`TlsTrust::Roots`] 只给**测试**用：假 IMAP 服务器用自签证书，
+/// 测试需要显式把那一张 CA 交给客户端。
+/// 它不会出现在生产路径上。
+#[derive(Debug, Clone)]
+pub enum TlsTrust {
+    /// 系统根证书。
+    SystemRoots,
+    /// 指定的根证书集合（仅测试）。
+    Roots(rustls::RootCertStore),
+}
+
 /// 建立 TLS 连接并登录。
 ///
-/// 返回：已登录会话、**认证后**的能力集、TLS 会话信息。
-///
-/// 能力集一定是拿到了的：登录时优先用 LOGIN 响应里带的，没有就补发一次
-/// `CAPABILITY`（因为发不发 `ID` 取决于服务器是否宣告 `ID` 能力）。
+/// 用**系统根**校验服务端证书。
 pub async fn connect_and_login(
     config: &ImapConfig,
     username: &str,
     password: &str,
 ) -> Result<(Session, Capabilities, TlsInfo), ProtocolError> {
-    let tls_info = connect_tls(config).await?;
+    connect_and_login_with(config, &TlsTrust::SystemRoots, username, password).await
+}
+
+/// 建立 TLS 连接并登录，信任来源可指定。
+///
+/// 返回：已登录会话、**认证后**的能力集、TLS 会话信息。
+///
+/// 能力集一定是拿到了的：登录时优先用 LOGIN 响应里带的，没有就补发一次
+/// `CAPABILITY`（因为发不发 `ID` 取决于服务器是否宣告 `ID` 能力）。
+pub async fn connect_and_login_with(
+    config: &ImapConfig,
+    trust: &TlsTrust,
+    username: &str,
+    password: &str,
+) -> Result<(Session, Capabilities, TlsInfo), ProtocolError> {
+    let tls_info = connect_tls(config, trust).await?;
     let stream = tls_info.0;
     let info = tls_info.1;
 
@@ -122,17 +151,14 @@ pub async fn connect_and_login(
     .map_err(|_| ProtocolError::Timeout("登录超时".into()))?
     .map_err(|(err, _client)| {
         // 错误信息里**不带**用户名/口令。
-        ProtocolError::Auth(err.to_string())
+        classify_login_error(err)
     })?;
 
     // 登录后立刻自报身份（若服务器支持）。见 `CLIENT_IDENTIFICATION` 的说明：
     // 缺这一步，163 会拒绝所有邮箱访问命令。
     let capabilities = match capabilities {
         Some(caps) => caps,
-        None => session
-            .capabilities()
-            .await
-            .map_err(|e| ProtocolError::Imap(format!("读取能力集失败: {e}")))?,
+        None => session.capabilities().await.map_err(classify_imap_error)?,
     };
 
     if capabilities.has_str("ID") {
@@ -149,8 +175,11 @@ pub async fn connect_and_login(
 }
 
 /// 建立 TLS 连接，返回流与会话信息。
-async fn connect_tls(config: &ImapConfig) -> Result<(ImapStream, TlsInfo), ProtocolError> {
-    let tls_connector = build_tls_connector()?;
+async fn connect_tls(
+    config: &ImapConfig,
+    trust: &TlsTrust,
+) -> Result<(ImapStream, TlsInfo), ProtocolError> {
+    let tls_connector = build_tls_connector(trust)?;
 
     let tcp = tokio::time::timeout(
         config.connect_timeout,
@@ -180,30 +209,38 @@ async fn connect_tls(config: &ImapConfig) -> Result<(ImapStream, TlsInfo), Proto
     Ok((BufReader::new(stream), info))
 }
 
-/// 构造 TLS 连接器：只用系统根证书。
-fn build_tls_connector() -> Result<TlsConnector, ProtocolError> {
+/// 构造 TLS 连接器。
+fn build_tls_connector(trust: &TlsTrust) -> Result<TlsConnector, ProtocolError> {
     let mut roots = rustls::RootCertStore::empty();
-    // `load_native_certs` 返回的是一个**结构体**（certs + errors），
-    // 不是 Result：部分证书加载失败时仍会返回已加载的那些。
-    // 这里只要有任何一个错误就**整体失败**——宁可报错，也不静默少信任一些根。
-    let loaded = rustls_native_certs::load_native_certs();
-    if !loaded.errors.is_empty() {
-        return Err(ProtocolError::Tls(format!(
-            "读取系统根证书时出错（{} 项）",
-            loaded.errors.len()
-        )));
-    }
-    if loaded.certs.is_empty() {
-        // 系统根为空 ⇒ 无法校验证书。此时**必须失败**，
-        // 不能退化成「不校验」。
-        return Err(ProtocolError::Tls(
-            "系统根证书为空，无法校验服务端证书".into(),
-        ));
-    }
-    for cert in loaded.certs {
-        roots
-            .add(cert)
-            .map_err(|e| ProtocolError::Tls(format!("系统根证书无效: {e}")))?;
+
+    match trust {
+        TlsTrust::Roots(store) => {
+            roots = store.clone();
+        }
+        TlsTrust::SystemRoots => {
+            // `load_native_certs` 返回的是一个**结构体**（certs + errors），
+            // 不是 Result：部分证书加载失败时仍会返回已加载的那些。
+            // 这里只要有任何一个错误就**整体失败**——宁可报错，也不静默少信任一些根。
+            let loaded = rustls_native_certs::load_native_certs();
+            if !loaded.errors.is_empty() {
+                return Err(ProtocolError::Tls(format!(
+                    "读取系统根证书时出错（{} 项）",
+                    loaded.errors.len()
+                )));
+            }
+            if loaded.certs.is_empty() {
+                // 系统根为空 ⇒ 无法校验证书。此时**必须失败**，
+                // 不能退化成「不校验」。
+                return Err(ProtocolError::Tls(
+                    "系统根证书为空，无法校验服务端证书".into(),
+                ));
+            }
+            for cert in loaded.certs {
+                roots
+                    .add(cert)
+                    .map_err(|e| ProtocolError::Tls(format!("系统根证书无效: {e}")))?;
+            }
+        }
     }
 
     let config = rustls::ClientConfig::builder()
@@ -211,6 +248,37 @@ fn build_tls_connector() -> Result<TlsConnector, ProtocolError> {
         .with_no_client_auth();
 
     Ok(TlsConnector::from(Arc::new(config)))
+}
+
+/// 把登录失败分类成应用错误。
+///
+/// 关键区分：**“密码不对”与“网络断了”不是一回事**。
+/// 把连接断开当成认证失败，会让用户去反复检查一个根本没问题的密码，
+/// 也会让重试策略失效（认证错误不可重试，传输错误可重试）。
+fn classify_login_error(err: async_imap::error::Error) -> ProtocolError {
+    match err {
+        // 服务器回了 NO = 凭据被拒。
+        async_imap::error::Error::No(detail) => ProtocolError::Auth(detail),
+        other => classify_imap_error(other),
+    }
+}
+
+/// 把一般的 IMAP 错误分类成应用错误。
+///
+/// 传输层故障（IO / 连接断开）**可重试**；
+/// 服务器回了 NO / BAD、响应解析失败则是协议层问题，不可重试。
+fn classify_imap_error(err: async_imap::error::Error) -> ProtocolError {
+    match err {
+        async_imap::error::Error::Io(io) => ProtocolError::Io(io.to_string()),
+        async_imap::error::Error::ConnectionLost => ProtocolError::Io("连接被断开".into()),
+        // 服务器不认这条命令 / 回了 NO = 协议层问题。
+        async_imap::error::Error::Bad(detail) => ProtocolError::Imap(detail),
+        async_imap::error::Error::No(detail) => ProtocolError::Imap(detail),
+        async_imap::error::Error::Parse(err) => ProtocolError::Imap(err.to_string()),
+        // 我们自己发的参数不合法。
+        async_imap::error::Error::Validate(err) => ProtocolError::Invalid(err.to_string()),
+        other => ProtocolError::Imap(other.to_string()),
+    }
 }
 
 /// 提取 TLS 会话信息。

@@ -17,7 +17,7 @@
 
 ## 2. 模块与依赖
 
-当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync`、`xremail-protocol-imap` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync`、`xremail-protocol-imap`、`xremail-testkit` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|

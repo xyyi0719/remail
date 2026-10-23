@@ -37,6 +37,10 @@ pub enum ProtocolError {
     #[error("操作超时: {0}")]
     Timeout(String),
 
+    /// 入参不合法。
+    #[error("无效的输入: {0}")]
+    Invalid(String),
+
     /// 服务器不支持所需能力。
     #[error("服务器不支持该能力: {0}")]
     Unsupported(String),
