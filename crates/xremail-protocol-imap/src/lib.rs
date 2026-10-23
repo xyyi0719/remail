@@ -19,7 +19,7 @@ pub mod error;
 pub mod probe;
 pub mod utf7;
 
-pub use command::{CommandOutcome, FetchedMessage, run_checked};
+pub use command::{CommandOutcome, FetchedMessage, MailboxInfo, examine_checked, run_checked};
 pub use connection::{
     ImapConfig, ImapStream, Session, TlsInfo, TlsTrust, connect_and_login, connect_and_login_with,
 };

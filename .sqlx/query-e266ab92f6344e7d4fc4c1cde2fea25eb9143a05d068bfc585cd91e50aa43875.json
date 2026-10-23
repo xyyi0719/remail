@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT from_addr, to_addr FROM message WHERE id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "from_addr",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_addr"
+          }
+        }
+      },
+      {
+        "name": "to_addr",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "to_addr"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "e266ab92f6344e7d4fc4c1cde2fea25eb9143a05d068bfc585cd91e50aa43875"
+}

@@ -222,9 +222,22 @@ async fn handle_connection(
         }
 
         // 故障注入：拒绝。
+        //
+        // `UID FETCH` 这类命令的**命令名**是 `UID`，子命令才是 `FETCH`。
+        // 两种写法都要能匹配上，否则 `Fault::Reject("FETCH")` 拦不住 `UID FETCH`。
         if let Some(Fault::Reject(_)) = config.fault_for(&command.name) {
             reply!(write_half, "{} NO [SERVERBUG] injected fault", command.tag);
             continue;
+        }
+        if let Some((sub, _)) = command.uid_subcommand() {
+            if let Some(Fault::Reject(_)) = config.fault_for(&sub) {
+                reply!(write_half, "{} NO [SERVERBUG] injected fault", command.tag);
+                continue;
+            }
+            if let Some(Fault::HangOn(_)) = config.fault_for(&sub) {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                break;
+            }
         }
 
         let ctx = ServerCtx {

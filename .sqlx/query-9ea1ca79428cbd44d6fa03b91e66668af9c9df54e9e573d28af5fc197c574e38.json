@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT uid FROM message\n        WHERE account_id = ? AND folder_id = ? AND uidvalidity = ?\n        ORDER BY uid ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "uid",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "uid"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9ea1ca79428cbd44d6fa03b91e66668af9c9df54e9e573d28af5fc197c574e38"
+}

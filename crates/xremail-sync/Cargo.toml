@@ -9,3 +9,13 @@ authors.workspace = true
 
 [dependencies]
 xremail-core = { workspace = true }
+xremail-store = { workspace = true }
+xremail-protocol-imap = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# 端到端测试用假 IMAP 服务器（见 tests/pull_sync.rs）。
+xremail-testkit = { path = "../xremail-testkit" }

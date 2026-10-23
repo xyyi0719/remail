@@ -35,6 +35,7 @@
 pub mod diff;
 pub mod epoch;
 pub mod intent;
+pub mod pull;
 
 pub use diff::{UidDiff, UidSet, diff_uids};
 pub use epoch::{EpochTransition, PendingOperationBinding, StoredEpoch, plan_epoch_transition};
@@ -42,3 +43,4 @@ pub use intent::{
     FlagDelta, FlagIntent, FlagPlan, MAX_REPLAN_ATTEMPTS, apply_intents, plan_flag_update,
     stale_intents,
 };
+pub use pull::{FolderSyncReport, flags_from_imap, pull_folder};

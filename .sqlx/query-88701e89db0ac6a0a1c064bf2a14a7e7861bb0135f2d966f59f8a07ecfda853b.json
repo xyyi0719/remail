@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE folder\n        SET uidvalidity = ?, last_uid = ?, highest_modseq = ?, last_sync_at = ?\n        WHERE id = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "88701e89db0ac6a0a1c064bf2a14a7e7861bb0135f2d966f59f8a07ecfda853b"
+}

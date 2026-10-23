@@ -30,6 +30,17 @@ use imap_proto::{AttributeValue, MessageSection, Response, SectionPath, Status};
 use crate::connection::Session;
 use crate::error::ProtocolError;
 
+/// 把 async-imap 的错误分类成 [`ProtocolError`]。
+///
+/// 关键区分：**“密码不对”与“网络断了”不是一回事**
+/// （详见 `connection` 模块里的同名函数）。
+fn classify_imap_error(error: async_imap::error::Error) -> ProtocolError {
+    match error {
+        async_imap::error::Error::No(detail) => ProtocolError::Auth(detail),
+        other => crate::connection::classify_imap_error(other),
+    }
+}
+
 /// 一条 FETCH 响应（已解析）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FetchedMessage {
@@ -87,6 +98,54 @@ impl CommandOutcome {
             CommandOutcome::Search(ids) => ids,
             _ => &[],
         }
+    }
+}
+
+/// 打开一个文件夹（只读）后的概况。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MailboxInfo {
+    /// 邮件总数。
+    pub exists: u32,
+    /// 带 `\Recent` 的邮件数。
+    pub recent: u32,
+    /// 未读数。
+    ///
+    /// `None` 表示服务器没报——163 的 `EXAMINE` 就不报这个。
+    pub unseen: Option<u32>,
+    /// **epoch**（UIDVALIDITY）。
+    ///
+    /// `None` 表示服务器没给——**不能**拿它当 0 用：
+    /// 没有 epoch 就无法定位邮件（见 ARCHITECTURE §4.3）。
+    pub uid_validity: Option<u32>,
+    /// 下一个 UID。
+    pub uid_next: Option<u32>,
+    /// 最高 MODSEQ（CONDSTORE）。
+    pub highest_modseq: Option<u64>,
+}
+
+/// 安全地打开一个文件夹（只读，`EXAMINE`）。
+///
+/// 与 [`run_checked`] 一样，服务器回 `NO` / `BAD` 时**一定**返回错误。
+///
+/// 为什么单独写一个：async-imap 的 `examine` 走的是 `parse_status`，
+/// 它**会**把 `NO` / `BAD` 变成错误（不像 `uid_fetch` 那样吞掉），
+/// 但错误类型是 `async_imap::Error`——分类工作交给本层做。
+pub async fn examine_checked(
+    session: &mut Session,
+    mailbox: &str,
+) -> Result<MailboxInfo, ProtocolError> {
+    let result = session.examine(mailbox).await;
+
+    match result {
+        Ok(mailbox) => Ok(MailboxInfo {
+            exists: mailbox.exists,
+            recent: mailbox.recent,
+            unseen: mailbox.unseen,
+            uid_validity: mailbox.uid_validity,
+            uid_next: mailbox.uid_next,
+            highest_modseq: mailbox.highest_modseq,
+        }),
+        Err(error) => Err(classify_imap_error(error)),
     }
 }
 

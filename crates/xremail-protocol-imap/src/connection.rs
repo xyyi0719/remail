@@ -267,7 +267,7 @@ fn classify_login_error(err: async_imap::error::Error) -> ProtocolError {
 ///
 /// 传输层故障（IO / 连接断开）**可重试**；
 /// 服务器回了 NO / BAD、响应解析失败则是协议层问题，不可重试。
-fn classify_imap_error(err: async_imap::error::Error) -> ProtocolError {
+pub(crate) fn classify_imap_error(err: async_imap::error::Error) -> ProtocolError {
     match err {
         async_imap::error::Error::Io(io) => ProtocolError::Io(io.to_string()),
         async_imap::error::Error::ConnectionLost => ProtocolError::Io("连接被断开".into()),

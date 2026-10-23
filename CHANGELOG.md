@@ -40,6 +40,25 @@
     - 绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算
     - `MAX_REPLAN_ATTEMPTS = 3`：MODIFIED 后重新读取并重算的次数上限（重试有界）
   - 本阶段**只含纯函数**：无网络、无 IO，可直接在 CI 跑；账户调度与 IMAP 会话属 P2
+- **同步引擎的拉取链路**（`xremail-sync::pull`）：服务器 → 差分 → SQLite
+  - 固定流程：`EXAMINE`（拿 epoch）→ epoch 判定 → 取远端 UID 集合 → 差分 →
+    拉取新增 → 清理服务器已删 → 更新游标
+  - 远端 UID 集合用 `UID FETCH 1:* (UID)` 而不是 `UID SEARCH ALL`：
+    **FETCH 是 IMAP 的必备命令，SEARCH 是可选扩展**
+  - 拉取**只读**（`EXAMINE`），标记回写另走 `SELECT`
+  - 报告区分三种情况：`first_sync`（首次）/ `epoch_changed`（旧世代作废）/ `full_fetch`
+  - 用 `run_checked` 而不是 async-imap 的 `uid_fetch`——
+    后者会**吞掉**服务器的 `NO`，那样会把整个文件夹的缓存当成「服务器已删」清掉
+- **`xremail-store` 的邮件 DAO**（`dao/message.rs`）
+  - 按 `(account_id, folder_id, uidvalidity, uid)` upsert（四元组才是身份，
+    `Message-ID` 仅作线索）
+  - `list_message_uids` 只取 UID，**不取正文**——差分只需要知道「有哪些」
+- **`xremail-store` 的跨表同步提交**（`dao/sync.rs`）
+  - 一轮文件夹同步要同时动三张表，必须**原子**：
+    清旧世代 → 写新邮件 → 删服务器已删的 → 更新游标
+  - 顺序很重要：先清旧世代再写新的（反过来会把刚写进来的新世代邮件也删掉）
+- **`xremail-protocol-imap` 的安全 `examine_checked`**：打开文件夹并返回
+  epoch / 邮件数等概况，服务器拒绝时**一定**返回错误
 - **假 IMAP 服务器补齐同步链路命令**：`UID FETCH` / `UID SEARCH` / `UID STORE`
   - 假服务器有了**共享可变状态**：`STORE` 改完，后续 `FETCH` / `SEARCH` 能看到
   - `sequence` 模块：sequence set 解析（`1:10,15,20:*`）——**在服务端**，

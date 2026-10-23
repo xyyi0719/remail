@@ -35,6 +35,7 @@ xremail-store = { path = "crates/xremail-store" }
 xremail-crypto = { path = "crates/xremail-crypto" }
 xremail-api = { path = "crates/xremail-api" }
 xremail-sync = { path = "crates/xremail-sync" }
+xremail-protocol-imap = { path = "crates/xremail-protocol-imap" }
 
 anyhow = "1"
 thiserror = "2"

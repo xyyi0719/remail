@@ -1,0 +1,218 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id, account_id, folder_id, uid, uidvalidity,\n               message_id, subject, snippet,\n               from_addr, to_addr, cc_addr, bcc_addr,\n               date_sent, internal_date, flags, size, has_attachment\n        FROM message\n        WHERE id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "folder_id",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "folder_id"
+          }
+        }
+      },
+      {
+        "name": "uid",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "uid"
+          }
+        }
+      },
+      {
+        "name": "uidvalidity",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "uidvalidity"
+          }
+        }
+      },
+      {
+        "name": "message_id",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "snippet",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "snippet"
+          }
+        }
+      },
+      {
+        "name": "from_addr",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_addr"
+          }
+        }
+      },
+      {
+        "name": "to_addr",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "to_addr"
+          }
+        }
+      },
+      {
+        "name": "cc_addr",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "cc_addr"
+          }
+        }
+      },
+      {
+        "name": "bcc_addr",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "bcc_addr"
+          }
+        }
+      },
+      {
+        "name": "date_sent",
+        "ordinal": 12,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "date_sent"
+          }
+        }
+      },
+      {
+        "name": "internal_date",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "internal_date"
+          }
+        }
+      },
+      {
+        "name": "flags",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "flags"
+          }
+        }
+      },
+      {
+        "name": "size",
+        "ordinal": 15,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "size"
+          }
+        }
+      },
+      {
+        "name": "has_attachment",
+        "ordinal": 16,
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "has_attachment"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "f25a5b64a489af139953a74dd7abf6d321d9a4bd6f48f2739ce35c5da856154b"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM message\n            WHERE account_id = ? AND folder_id = ? AND uidvalidity != ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "26ab957cdfa37a1560a1502bab30e602952e483cafd8c1c97c64da0b995b9140"
+}
