@@ -322,6 +322,56 @@ impl MessageFlags {
     pub const fn is_deleted(self) -> bool {
         self.contains(Self::DELETED)
     }
+
+    /// 位掩码 → IMAP 系统标记名。
+    ///
+    /// 顺序固定（按位从低到高），便于断言与日志比对。
+    /// 自定义关键字（`$Label1` 之类）没有对应位，**不在这里**——
+    /// 位掩码表达不了它们。
+    pub fn to_imap_names(self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        for (bit, name) in [
+            (Self::SEEN, "\\Seen"),
+            (Self::ANSWERED, "\\Answered"),
+            (Self::FLAGGED, "\\Flagged"),
+            (Self::DELETED, "\\Deleted"),
+            (Self::DRAFT, "\\Draft"),
+            (Self::RECENT, "\\Recent"),
+        ] {
+            if self.contains(bit) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// IMAP 系统标记名 → 位掩码。
+    ///
+    /// 认不出的名字（自定义关键字）**忽略**，不是错误：
+    /// 服务器可能给邮件打上应用自���的关键字，客户端不认识就不管。
+    pub fn from_imap_names(names: &[impl AsRef<str>]) -> Self {
+        let mut flags = Self::empty();
+        for name in names {
+            let name = name.as_ref();
+            let bit = if name.eq_ignore_ascii_case("\\Seen") {
+                Self::SEEN
+            } else if name.eq_ignore_ascii_case("\\Answered") {
+                Self::ANSWERED
+            } else if name.eq_ignore_ascii_case("\\Flagged") {
+                Self::FLAGGED
+            } else if name.eq_ignore_ascii_case("\\Deleted") {
+                Self::DELETED
+            } else if name.eq_ignore_ascii_case("\\Draft") {
+                Self::DRAFT
+            } else if name.eq_ignore_ascii_case("\\Recent") {
+                Self::RECENT
+            } else {
+                continue;
+            };
+            flags = flags.with(bit);
+        }
+        flags
+    }
 }
 
 /// A message envelope as stored locally.
@@ -357,6 +407,130 @@ pub struct Message {
     pub flags: MessageFlags,
     pub size: Option<i64>,
     pub has_attachment: bool,
+}
+
+/// 本地待提交操作的状态机。
+///
+/// **这些取值就是 `mail_operation.state` 列的取值**，两者必须一致：
+/// 改枚举名就得配一个数据迁移（见 [ARCHITECTURE §5](../../../docs/ARCHITECTURE.md)）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperationState {
+    /// 已排队，尚未提交。
+    #[serde(rename = "queued")]
+    Queued,
+    /// 正在提交。
+    #[serde(rename = "running")]
+    Running,
+    /// 服务器已确认。
+    #[serde(rename = "succeeded")]
+    Succeeded,
+    /// 失败，但可以重试（网络故障、服务器忙……）。
+    #[serde(rename = "retryable")]
+    Retryable,
+    /// 失败，且不该重试（如 epoch 变了、意图自相矛盾）。
+    #[serde(rename = "failed")]
+    Failed,
+    /// 不知道服务器到底执行了没有。
+    ///
+    /// 例如：命令发出去了，但没收到服务器的确认。
+    /// **不能盲目重试**——可能已经执行过了（见 ARCHITECTURE §5）。
+    #[serde(rename = "uncertain")]
+    Uncertain,
+}
+
+impl OperationState {
+    /// 是否还没完结（需要继续处理）。
+    pub fn is_pending(self) -> bool {
+        matches!(
+            self,
+            OperationState::Queued | OperationState::Running | OperationState::Retryable
+        )
+    }
+
+    /// 是否是终态。
+    pub fn is_terminal(self) -> bool {
+        !self.is_pending()
+    }
+
+    /// 是否还可以重试。
+    pub fn is_retryable(self) -> bool {
+        matches!(self, OperationState::Queued | OperationState::Retryable)
+    }
+}
+
+/// 本地待提交操作的类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperationKind {
+    /// 标记变更（bit 级增删）。
+    #[serde(rename = "flags")]
+    Flags,
+}
+
+/// 标记变更的意图载荷。
+///
+/// 存进 `mail_operation.intent` 列（JSON 文本）。
+///
+/// **只是意图，不是命令**：它说「用户想让这封信变成什么样」，
+/// 实际要发什么命令由同步层根据服务器快照算出来
+/// （见 [ARCHITECTURE §6](../../../docs/ARCHITECTURE.md)）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FlagIntentPayload {
+    /// 要置位的位。
+    pub add: MessageFlags,
+    /// 要清除的位。
+    pub remove: MessageFlags,
+}
+
+impl FlagIntentPayload {
+    /// 新建一个意图载荷。
+    pub fn new(add: MessageFlags, remove: MessageFlags) -> Self {
+        Self { add, remove }
+    }
+
+    /// 是否自相矛盾（同一 bit 既置位又清除）。
+    pub fn is_contradictory(&self) -> bool {
+        !self.add.intersection(self.remove).is_empty()
+    }
+}
+
+/// 一条本地待提交的操作。
+///
+/// 对应 `mail_operation` 表。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailOperation {
+    /// 本地 ID。
+    pub id: String,
+    /// 所属账户。
+    pub account_id: String,
+    /// 所属文件夹。
+    pub folder_id: String,
+    /// 目标邮件的 UID。
+    pub uid: i64,
+    /// 目标邮件所属的 **epoch**。
+    ///
+    /// epoch 变了以后，旧 UID 指向的是另一封信，
+    /// 旧操作**不能**套用（见 [ARCHITECTURE §4.3](../../../docs/ARCHITECTURE.md)）。
+    pub uidvalidity: i64,
+    /// 操作类型。
+    pub kind: OperationKind,
+    /// 意图载荷。
+    pub intent: FlagIntentPayload,
+    /// 状态。
+    pub state: OperationState,
+    /// 本地单调序号——同一封邮件上多个意图的定序依据。
+    pub seq: i64,
+    /// 已知的服务器 MODSEQ 基线；无 CONDSTORE 时为 `None`。
+    pub base_version: Option<i64>,
+    /// 已尝试次数。
+    pub attempts: i64,
+    /// 失败分类。
+    pub error_kind: Option<String>,
+    /// 失败详情。
+    pub error_message: Option<String>,
+    /// 创建时间（epoch 毫秒）。
+    pub created_at: i64,
+    /// 更新时间（epoch 毫秒）。
+    pub updated_at: i64,
 }
 
 /// Lifecycle state of a per-account synchronisation actor.

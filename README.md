@@ -13,8 +13,8 @@
 > **v0.1.0 · P0 脚手架阶段**（2026-10）
 >
 > 工程骨架已生成，架构持续复核，协议与持久化业务尚未实现。当前设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-> 2026-10-23 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（321 个用例）/ `npm typecheck` / `npm build` 均通过。
-> 存储层（`xremail-store`）、密文封装（`xremail-crypto`）、L2 契约（`xremail-api`）、同步纯函数（`xremail-sync`）、IMAP 协议层（`xremail-protocol-imap`）与假服务器（`xremail-testkit`）已落地，同步引擎的**拉取链路**已打通；**尚未接入应用**（`list_accounts` 仍返回硬编码空列表）。
+> 2026-10-23 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（332 个用例）/ `npm typecheck` / `npm build` 均通过。
+> 存储层（`xremail-store`）、密文封装（`xremail-crypto`）、L2 契约（`xremail-api`）、同步纯函数（`xremail-sync`）、IMAP 协议层（`xremail-protocol-imap`）与假服务器（`xremail-testkit`）已落地，同步引擎的**拉取与回写**链路已打通；**尚未接入应用**（`list_accounts` 仍返回硬编码空列表）。
 > 想看进度：[docs/ROADMAP.md](docs/ROADMAP.md)
 
 | 状态 |

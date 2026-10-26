@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE message SET flags = ?\n        WHERE account_id = ? AND folder_id = ? AND uidvalidity = ? AND uid = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "0a15ae58efc8371b898df4227f379b59a0a35926fa2b32c7639603338bc15474"
+}

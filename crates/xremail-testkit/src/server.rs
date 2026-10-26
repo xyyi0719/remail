@@ -238,6 +238,15 @@ async fn handle_connection(
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                 break;
             }
+            // 直接断开：客户端不知道服务器执行了没。
+            if let Some(Fault::DropOn(_)) = config.fault_for(&sub) {
+                break;
+            }
+        }
+
+        // 故障注入：直接断开连接。
+        if let Some(Fault::DropOn(_)) = config.fault_for(&command.name) {
+            break;
         }
 
         let ctx = ServerCtx {
@@ -776,6 +785,7 @@ async fn handle_store<W>(
 where
     W: AsyncWrite + Unpin,
 {
+    let config = ctx.config;
     let mailboxes = ctx.mailboxes;
     let Some(index) = state.selected else {
         reply!(writer, "{tag} NO STORE State error");
@@ -819,11 +829,15 @@ where
             Some(mailbox) => {
                 let targets = resolve_targets(&set, &mailbox.messages, by_uid);
 
-                let conflict = request.unchangedsince.is_some_and(|expected| {
-                    targets
-                        .iter()
-                        .any(|&target| mailbox.messages[target].modseq != expected)
-                });
+                // 条件写只在服务器宣告 CONDSTORE 时才有意义。
+                // 163 这类服务器没有 CONDSTORE，发 `UNCHANGEDSINCE` 会被当成语法错误。
+                let supports_condstore = config.has_capability("CONDSTORE");
+                let conflict = supports_condstore
+                    && request.unchangedsince.is_some_and(|expected| {
+                        targets
+                            .iter()
+                            .any(|&target| mailbox.messages[target].modseq != expected)
+                    });
 
                 if conflict {
                     Some(StoreOutcome::Failed(format!(
@@ -856,7 +870,12 @@ where
                             }
                         }
 
-                        if message.flags != before {
+                        let ignore = config.has_fault(&Fault::IgnoreStore);
+                        if ignore {
+                            // 「听话的假服务器」：回 OK 但**不真的改**。
+                            // 客户端只有**回读确认**才能发现（见 ARCHITECTURE §6）。
+                            message.flags = before;
+                        } else if message.flags != before {
                             message.modseq += 1;
                             changes.push((target as u32 + 1, message.uid, message.flags.clone()));
                         }

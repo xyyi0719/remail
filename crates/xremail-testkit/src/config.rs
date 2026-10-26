@@ -295,6 +295,16 @@ pub enum Fault {
     RejectLogin,
     /// 认证成功但**不**回 `CAPABILITY`（模拟 163 认证前拒绝一切命令）。
     NoCapabilityResponse,
+    /// 收到 `STORE` 后**回 OK 但不真的改**（“听话的假服务器”）。
+    ///
+    /// 模拟「服务器收了命令却没执行」——客户端只有**回读确认**
+    /// 才能发现（见 ARCHITECTURE §6）。
+    IgnoreStore,
+    /// 收到某条命令后**直接断开连接**（不回任何响应）。
+    ///
+    /// 模拟「命令发出去了，但没收到服务器的确认」——
+    /// 客户端**不知道**服务器到底执行了没（见 ARCHITECTURE §5）。
+    DropOn(String),
 }
 
 /// 假服务器的配置。
@@ -380,7 +390,9 @@ impl ServerConfig {
     pub fn fault_for(&self, command: &str) -> Option<&Fault> {
         let upper = command.to_ascii_uppercase();
         self.faults.iter().find(|fault| match fault {
-            Fault::HangOn(cmd) | Fault::Reject(cmd) => cmd.eq_ignore_ascii_case(&upper),
+            Fault::HangOn(cmd) | Fault::Reject(cmd) | Fault::DropOn(cmd) => {
+                cmd.eq_ignore_ascii_case(&upper)
+            }
             _ => false,
         })
     }

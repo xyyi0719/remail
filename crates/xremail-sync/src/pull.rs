@@ -29,7 +29,9 @@ use std::collections::BTreeSet;
 use sqlx::SqlitePool;
 use xremail_core::model::{Folder, Message, MessageFlags};
 use xremail_core::{AppError, AppResult};
-use xremail_protocol_imap::{CommandOutcome, ProtocolError, Session, examine_checked, run_checked};
+use xremail_protocol_imap::{CommandOutcome, ProtocolError, Session, examine_checked};
+
+use crate::net::run_checked_with_timeout;
 use xremail_store::dao::message as message_dao;
 use xremail_store::dao::sync::{FolderSyncWrite, commit_folder_sync};
 
@@ -197,7 +199,7 @@ pub async fn pull_folder(
 
 /// 取远端的全部 UID。
 async fn fetch_remote_uids(session: &mut Session) -> AppResult<UidSet> {
-    let outcome = run_checked(session, "UID FETCH 1:* (UID)")
+    let outcome = run_checked_with_timeout(session, "UID FETCH 1:* (UID)")
         .await
         .map_err(map_protocol_error)?;
 
@@ -225,7 +227,7 @@ async fn fetch_metadata(
     for batch in uids.chunks(BATCH) {
         let set = build_uid_set(batch);
         let command = format!("UID FETCH {set} (UID FLAGS RFC822.SIZE)");
-        let outcome = run_checked(session, &command)
+        let outcome = run_checked_with_timeout(session, &command)
             .await
             .map_err(map_protocol_error)?;
         if let CommandOutcome::Fetches(messages) = outcome {

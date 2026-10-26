@@ -40,6 +40,20 @@
     - 绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算
     - `MAX_REPLAN_ATTEMPTS = 3`：MODIFIED 后重新读取并重算的次数上限（重试有界）
   - 本阶段**只含纯函数**：无网络、无 IO，可直接在 CI 跑；账户调度与 IMAP 会话属 P2
+- **标记回写链路**（`xremail-sync::push`）：本地意图 → 队列 → 服务器 → **回读确认**
+  - 流程：读快照 → 重放意图算净变化 → 发 `UID STORE` → **回读确认** → 更新状态
+  - **三种失败分得很清**：
+    - 服务器明确回 `NO` → `retryable`（它告诉我们**没执行**）
+    - 服务器回 `NO [MODIFIED]` → `retryable`（基线过期，重新读快照重算，**有界**）
+    - 连接断了 / 超时 → `uncertain`（**不知道**服务器执行了没，盲目重试可能重复执行）
+  - 只发**变化的位**，不整组替换 `FLAGS`；增删同时存在时发两条命令
+  - epoch 变了 → 绑定旧 epoch 的操作被**隔离**（`failed`），绝不套用到新 UID 上
+- **操作队列**（`mail_operation` 表 + `xremail-store::dao::operation`）
+  - 状态机：`queued` / `running` / `succeeded` / `retryable` / `failed` / `uncertain`
+    （**这些取值就是 DB 列的取值**，改枚举名要配数据迁移）
+  - `seq`（本地单调序号）决定同一封信上多个意图的定序——不能用 `created_at`（同毫秒会撞号）
+  - 自相矛盾的意图（同一 bit 既置位又清除）**入队时就拒绝**
+  - 新增迁移 `0002_operation_seq.sql`（顺带验证了升级路径）
 - **同步引擎的拉取链路**（`xremail-sync::pull`）：服务器 → 差分 → SQLite
   - 固定流程：`EXAMINE`（拿 epoch）→ epoch 判定 → 取远端 UID 集合 → 差分 →
     拉取新增 → 清理服务器已删 → 更新游标

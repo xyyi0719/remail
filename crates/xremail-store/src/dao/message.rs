@@ -330,6 +330,35 @@ pub async fn update_message_flags(
     Ok(result.rows_affected() > 0)
 }
 
+/// 按远端身份（账户 + 文件夹 + epoch + UID）改一封邮件的标记。
+///
+/// 同步层回写标记后用它把本地视图对齐到**服务器确认过的状态**。
+pub async fn update_message_flags_by_uid(
+    pool: &SqlitePool,
+    account_id: &str,
+    folder_id: &str,
+    uidvalidity: i64,
+    uid: i64,
+    flags: xremail_core::model::MessageFlags,
+) -> AppResult<bool> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE message SET flags = ?
+        WHERE account_id = ? AND folder_id = ? AND uidvalidity = ? AND uid = ?
+        "#,
+        i64::from(flags.bits()),
+        account_id,
+        folder_id,
+        uidvalidity,
+        uid
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "update_message_flags_by_uid"))?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 /// 统计某个文件夹里缓存了几封邮件。
 pub async fn count_messages(
     pool: &SqlitePool,

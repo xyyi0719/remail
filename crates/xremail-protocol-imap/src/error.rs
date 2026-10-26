@@ -44,6 +44,14 @@ pub enum ProtocolError {
     /// 服务器不支持所需能力。
     #[error("服务器不支持该能力: {0}")]
     Unsupported(String),
+
+    /// 条件写失败：服务器的 MODSEQ 变了（`NO [MODIFIED]`）。
+    ///
+    /// 与普通的 `NO` 分开：这一种**不是失败**，而是「你的基线过期了」。
+    /// 正确处置是**重新读取快照并按意图重算**，而不是原样重试
+    /// （见 [ARCHITECTURE §6](../../../docs/ARCHITECTURE.md)）。
+    #[error("条件写失败（MODSEQ 已变）: {0}")]
+    ConditionFailed(String),
 }
 
 impl ProtocolError {

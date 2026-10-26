@@ -31,7 +31,7 @@
 - [x] `xremail-api`：SecretStore / VaultStore / SyncBackend 契约 + 内存 mock（2026-10-22）；T4 用例 25 个。
 - [x] `xremail-sync`：UID 差分 / epoch 切换 / bit 意图合并三个纯函数模块（2026-10-22）；T2 用例 57 个。
 - [x] `xremail-protocol-imap`：IMAP 协议层 + 只读 probe（2026-10-22）；163 实测完成。
-  - **实测账本**：Rust 用例 194 → **321**（新增 127 个）
+  - **实测账本**：Rust 用例 194 → **332**（新增 138 个）
 - [x] `xremail-testkit`：假 IMAP 服务器 + 故障注入（2026-10-22）；T7 前置已就位。
 - [x] `xremail-api`：新增应用服务 DTO `NewAccountRequest`（校验 + 转领域对象，14 个用例）。
 - [x] shell：服务层 + 真实持久化链路 + React 账户列表（2026-10-22）；服务测试 10 + IPC 测试 8。

@@ -203,10 +203,18 @@ pub async fn run_checked(
                     } else {
                         CommandOutcome::Empty
                     }),
-                    Status::No => Err(ProtocolError::Imap(format!(
-                        "服务器拒绝（NO）: {}",
-                        outcome_information(outcome)
-                    ))),
+                    Status::No => {
+                        // `[MODIFIED]` 不是失败，是「基线过期」——
+                        // 处置方式完全不同（重新读快照重算）。
+                        if is_modified(outcome) {
+                            Err(ProtocolError::ConditionFailed(outcome_information(outcome)))
+                        } else {
+                            Err(ProtocolError::Imap(format!(
+                                "服务器拒绝（NO）: {}",
+                                outcome_information(outcome)
+                            )))
+                        }
+                    }
                     Status::Bad => Err(ProtocolError::Imap(format!(
                         "服务器拒绝（BAD）: {}",
                         outcome_information(outcome)
@@ -218,6 +226,23 @@ pub async fn run_checked(
             _ => {}
         }
     }
+}
+
+/// 响应码是否是 `MODIFIED`（条件写失败）。
+///
+/// **注意**：imap-proto 0.17 **不认识** `MODIFIED` 这个 response code
+/// （它的 `ResponseCode` 枚举里没有这一项），
+/// 而它对未知 code 的解析用的是 `opt()`——于是整个
+/// `[MODIFIED] …` 会原样落进 `information` 文本。
+///
+/// 所以只能按文本判别。这也意味着：服务器回了
+/// `NO [MODIFIED] …` 时，客户端**不会**解析失败，
+/// 但也拿不到结构化的 response code。
+fn is_modified(outcome: &imap_proto::Outcome<'_>) -> bool {
+    outcome
+        .information
+        .as_ref()
+        .is_some_and(|text| text.to_lowercase().contains("modified"))
 }
 
 /// 取出响应里的信息。
