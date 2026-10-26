@@ -21,6 +21,7 @@
 
 use async_imap::types::Capabilities;
 use futures_util::TryStreamExt;
+use std::time::Duration;
 
 use crate::connection::{ImapConfig, Session, TlsInfo};
 use crate::error::ProtocolError;
@@ -148,6 +149,74 @@ const STANDARD_FOLDERS: &[&str] = &[
     "IMPORTANT",
 ];
 
+/// 按**名字**认特殊用途角色的兼底表。
+///
+/// ## 为什么需要兼底
+///
+/// RFC 6154 的特殊用途属性**不是所有服务器都给**：
+///
+/// * 163 给（`\Sent` / `\Drafts` / `\Trash` / `\Junk`）；
+/// * 沃也给；
+/// * **QQ 不给**——实测它的 LIST 只返回 `\NoSelect` / `\HasChildren`，
+///   哪怕它宣告了 XLIST。
+///
+/// 所以同步引擎认「已发送 / 草稿箱 / 垃圾邮件」不能只靠属性，
+/// 还得认名字。这张表来自三家服务商的**实测**（2026-10-23）。
+///
+/// 匹配时先**去掉尾部的空白与常见的分隔符**（如 `Junk E-mail`）。
+const ROLE_NAMES: &[(&str, &str)] = &[
+    // 163（中文名 + 属性，这两个都能命中）。
+    ("已发送", "sent"),
+    ("发送邮件", "sent"),
+    ("草稿箱", "drafts"),
+    ("草稿", "drafts"),
+    ("已删除", "trash"),
+    ("已删除邮件", "trash"),
+    ("垃圾邮件", "junk"),
+    ("垃圾箱", "junk"),
+    // QQ（英文名，**没有属性**，只能靠名字）。
+    ("sent messages", "sent"),
+    ("sent message", "sent"),
+    ("drafts", "drafts"),
+    ("draft", "drafts"),
+    ("deleted messages", "trash"),
+    ("deleted message", "trash"),
+    ("trash", "trash"),
+    ("junk", "junk"),
+    ("junk e-mail", "junk"),
+    ("spam", "junk"),
+    // 沃（英文名，**有属性**，名字兼底也能命中）。
+    ("sent items", "sent"),
+    ("sent item", "sent"),
+    ("deleted items", "trash"),
+    ("deleted item", "trash"),
+];
+
+/// 按名字识别特殊用途角色。
+fn role_by_name(name: &str) -> Option<&'static str> {
+    // 去掉首尾空白，并把全角空格也当空白。
+    let trimmed = name.trim();
+    let lower = trimmed.to_lowercase();
+
+    for (candidate, role) in ROLE_NAMES {
+        if lower == *candidate {
+            return Some(role);
+        }
+    }
+
+    // 再试一次「去掉尾部标点」的版本（如 `Sent Messages.`）。
+    let stripped = lower.trim_end_matches(['.', '!', '。', '！']);
+    if stripped != lower {
+        for (candidate, role) in ROLE_NAMES {
+            if stripped == *candidate {
+                return Some(role);
+            }
+        }
+    }
+
+    None
+}
+
 /// 执行只读探测。
 pub async fn probe(
     config: &ProbeConfig,
@@ -262,18 +331,40 @@ pub async fn probe(
 ///
 /// `idle()` 消耗 session，`done()` 把它还回来 —— 所以本函数把 session 原样退回，
 /// 调用方仍可正常 LOGOUT。
+/// 试一次 IDLE。
+///
+/// 正确流程（async-imap 0.12）：
+/// 1. `idle()` 拿到 handle；
+/// 2. **`init()`** 发 `IDLE` 命令并等服务器的 `+ idling` 续行；
+/// 3. `wait_with_timeout()` 等新数据；
+/// 4. **`done()`** 发 `DONE` 结束 IDLE，并把 session 还回来。
+///
+/// 第 2 步**不能省**：`done()` 里有断言，没 `init()` 过就直接 `done()`
+/// 会 panic（“Cannot call DONE on a non initialized idle connection”）。
+/// 163 不支持 IDLE 所以碰不到这个坑，QQ 支持——第一次跑 QQ 就炸了。
 async fn try_idle(
     session: Session,
     config: &ProbeConfig,
 ) -> Result<(Session, bool), ProtocolError> {
-    let handle = session.idle();
-    let done = handle.done();
+    let mut handle = session.idle();
 
-    match tokio::time::timeout(config.server.command_timeout, done).await {
-        Ok(Ok(session)) => Ok((session, true)),
-        Ok(Err(e)) => Err(ProtocolError::Imap(format!("IDLE 失败: {e}"))),
-        Err(_) => Err(ProtocolError::Timeout("IDLE 超时".into())),
-    }
+    // 发 IDLE，等服务器的 `+ idling` 续行。
+    tokio::time::timeout(config.server.command_timeout, handle.init())
+        .await
+        .map_err(|_| ProtocolError::Timeout("IDLE 初始化超时".into()))?
+        .map_err(|e| ProtocolError::Imap(format!("IDLE 初始化失败: {e}")))?;
+
+    // 等一小会儿，看服务器会不会推新数据（没有也不报错）。
+    let (wait, _interrupt) = handle.wait_with_timeout(Duration::from_secs(3));
+    let _ = tokio::time::timeout(config.server.command_timeout, wait).await;
+
+    // 发 DONE 结束 IDLE。
+    let session = tokio::time::timeout(config.server.command_timeout, handle.done())
+        .await
+        .map_err(|_| ProtocolError::Timeout("IDLE 结束超时".into()))?
+        .map_err(|e| ProtocolError::Imap(format!("IDLE 结束失败: {e}")))?;
+
+    Ok((session, true))
 }
 
 /// 从能力集里提取扩展支持度。
@@ -387,11 +478,63 @@ fn detect_role(mailbox: &async_imap::types::Name) -> Option<String> {
         return Some(role.to_string());
     }
 
-    // 没有特殊用途属性时，只能按名字认 INBOX。
+    // 没有特殊用途属性时，按**名字**认。
+    //
+    // QQ 就是一个例子：它的 LIST 只给 `\NoSelect` / `\HasChildren`，
+    // 不给 RFC 6154 的角色属性（实测 2026-10-23）。
     let name = crate::utf7::decode(mailbox.name()).unwrap_or_else(|_| mailbox.name().to_string());
     if name.eq_ignore_ascii_case("INBOX") {
         return Some("inbox".to_string());
     }
+    if let Some(role) = role_by_name(&name) {
+        return Some(role.to_string());
+    }
 
     None
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::role_by_name;
+
+    #[test]
+    fn qq_names_are_recognized_without_attributes() {
+        // QQ 的 LIST 不给 RFC 6154 属性（实测 2026-10-23），
+        // 所以角色**必须**能按名字认出来。
+        assert_eq!(role_by_name("Sent Messages"), Some("sent"));
+        assert_eq!(role_by_name("Drafts"), Some("drafts"));
+        assert_eq!(role_by_name("Deleted Messages"), Some("trash"));
+        assert_eq!(role_by_name("Junk"), Some("junk"));
+    }
+
+    #[test]
+    fn wo_names_are_recognized() {
+        assert_eq!(role_by_name("Sent Items"), Some("sent"));
+        assert_eq!(role_by_name("Drafts"), Some("drafts"));
+        assert_eq!(role_by_name("Trash"), Some("trash"));
+        assert_eq!(role_by_name("Junk E-mail"), Some("junk"));
+    }
+
+    #[test]
+    fn netease_chinese_names_are_recognized() {
+        assert_eq!(role_by_name("已发送"), Some("sent"));
+        assert_eq!(role_by_name("草稿箱"), Some("drafts"));
+        assert_eq!(role_by_name("已删除"), Some("trash"));
+        assert_eq!(role_by_name("垃圾邮件"), Some("junk"));
+    }
+
+    #[test]
+    fn matching_ignores_case_and_trailing_punctuation() {
+        assert_eq!(role_by_name("sent messages"), Some("sent"));
+        assert_eq!(role_by_name("DRAFTS"), Some("drafts"));
+        assert_eq!(role_by_name("Junk."), Some("junk"));
+        assert_eq!(role_by_name("  Trash  "), Some("trash"));
+    }
+
+    #[test]
+    fn unknown_names_have_no_role() {
+        assert_eq!(role_by_name("Virus Items"), None);
+        assert_eq!(role_by_name("其他文件夹"), None);
+        assert_eq!(role_by_name(""), None);
+    }
 }

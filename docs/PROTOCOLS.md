@@ -23,6 +23,30 @@
 
 ---
 
+## 三家国内服务商的实测对比（2026-10-23）
+
+| | 163 | QQ | 沃 |
+|---|---|---|---|
+| 服务器体系 | Coremail | QQMail XMIMAP4Server | **Coremail**（与 163 同源） |
+| IDLE | ❌ | ✅ | ❌ |
+| MOVE | ❌ | ✅ | ❌ |
+| CONDSTORE | ❌ | ❌ | ❌ |
+| UIDPLUS | ✅ | ✅ | ✅ |
+| NAMESPACE | ❌ | ✅ | ❌ |
+| 需先发 `ID` | ✅ **必须** | ❌ 不需要 | ❌ 不需要 |
+| LIST 给角色属性 | ✅ | ❌ **不给** | ✅ |
+| 文件夹名 | 中文 | 英文 | 英文 |
+| UIDVALIDITY | 1 | **1792993698**（大数） | 1 |
+| UIDNEXT | ❌ 不给 | ✅ 给 | ❌ 不给 |
+
+**三条结论**：
+
+1. **CONDSTORE 三家都没有** → 条件写只能走 ARCHITECTURE §6 的
+   「读快照 → 重放意图 → **回读确认**」。这也验证了我们不用 `UNCHANGEDSINCE` 是对的。
+2. **`ID` 是 163 独有的要求**（沃也是 Coremail 却不需要）→
+   连接层按能力集「有能力就发」是安全的，但不是必需的。
+3. **不能只靠 RFC 6154 属性认文件夹角色**——QQ 不给。必须准备名字兼底。
+
 ## 通用基线
 
 | 项 | 约定 |
@@ -260,10 +284,32 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 
 | 项 | 值 | 来源 | 状态 |
 |---|---|---|---|
-| IMAP | `imap.qq.com:993` (IMAPS) | 社区实测 | ⚠️ 待实测 |
+| IMAP | `imap.qq.com:993` (IMAPS) | 实测（2026-10-23） | ✅ **已实测** |
 | SMTP | `smtp.qq.com:465` (SSL) | 社区 | ⚠️ 待实测 |
 | 认证 | 16 位**授权码** | [官方帮助](https://help.mail.qq.com/detail/106/985) | ✅ |
 | 开启方式 | 设置 → 账号与安全 → 安全设置 → 开启 POP3/IMAP/SMTP → 生成授权码 | 官方 | ✅ |
+
+### 认证后实测记录（2026-10-23）
+
+只读探测（LOGIN → CAPABILITY → LIST → EXAMINE → IDLE），
+服务器自称 `QQMail XMIMAP4Server`。
+
+| 项 | 实测值 |
+|---|---|
+| TLS | TLSv1_3 / TLS13_AES_256_GCM_SHA384，rustls 系统根校验通过 |
+| 认证后能力集 | `CHILDREN` `COMPRESS=DEFLATE` `ID` `IDLE` `IMAP4` `IMAP4rev1` `MOVE` `NAMESPACE` `UIDPLUS` `XAPPLEPUSHSERVICE` `XLIST` |
+| 认证前能力集 | `IMAP4` `IMAP4rev1` `ID` `AUTH=PLAIN` `AUTH=LOGIN` `AUTH=XOAUTH2` `NAMESPACE` |
+| IDLE | ✅ **服务器接受**（`+ idling` 续行正常）——三家里唯一 |
+| MOVE | ✅ 有（163 / 沃都没有） |
+| CONDSTORE / QRESYNC | ❌ 无 → 条件写只能走「读快照 + 重放意图 + 回读确认」 |
+| UIDPLUS | ✅ 有 |
+| NAMESPACE | ✅ `NAMESPACE (("" "/")) NIL NIL` |
+| LIST-EXTENDED / UTF8 / QUOTA / LITERAL+ | ❌ 都没有（但宣告了 XLIST） |
+| 文件夹 | 7 个，分隔符 `/` |
+| INBOX | 70 封 / 15 未读 |
+| UIDVALIDITY | **1792993698**（大数） |
+| UIDNEXT | 105 |
+| 永久标记 | EXAMINE 不回 PERMANENTFLAGS |
 
 **已知坑**
 
@@ -271,26 +317,55 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 - 授权码生成需要扫码（微信/QQ）或密码验证。
 - 客户端必须是 16 位授权码，**不能用 QQ 密码**（官方明确警告）。
 - 有反垃圾策略：对高频/异常 IP 的 SMTP 提交会返回 `550 Spam is embedded` 等拒绝码。
+- **LIST 不返回 RFC 6154 的特殊用途属性**：实测只给 `\NoSelect` / `\HasChildren`，
+  尽管能力集里有 XLIST。所以「已发送 / 草稿箱 / 垃圾邮件」只能**按名字**认
+  （实测名：`Sent Messages` / `Drafts` / `Deleted Messages` / `Junk`）。
+  **不能只靠属性认角色**——这是 QQ 独有的坑。
+- **UIDVALIDITY 是大数而 UIDNEXT 很小**（1792993698 vs 105）：
+  说明服务器重建过邮箱。这正好说明 epoch 与 UID 空间**无关**，
+  epoch 切换逻辑（ARCHITECTURE §4.3）在 QQ 上很可能是常态路径。
+- **不需要先发 `ID`**：实测登录后直接 EXAMINE 就成功（与 163 相反）。
 
 ---
 
 ## 沃邮箱（@wo.cn）
 
-⚠️ **本项目最不确定的一家**，务必实测。
-
 | 项 | 值 | 来源 | 状态 |
 |---|---|---|---|
-| IMAP | `imap.wo.cn:993` | 社区（由 Coxremail 帮助中心推断） | ⚠️ **待实测** |
-| SMTP | `smtp.wo.cn:465` | 社区 | ⚠️ **待实测** |
+| IMAP | `imap.wo.cn:993` | 实测（2026-10-23） | ✅ **已实测** |
+| SMTP | `smtp.wo.cn:465` | 社区 | ⚠️ 待实测 |
 | POP | `pop.wo.cn` | [应用市场说明](https://mail.wo.cn/) | ⚠️ 待实测 |
-| 认证 | **授权码**（Coxremail 体系近期已禁用原密码登录） | [荣耀社区回复](https://club.honor.com/cn/thread-29278971-1-1.html) | ⚠️ 待实测 |
+| 认证 | **授权码**（实测：授权码可登录） | [荣耀社区回复](https://club.honor.com/cn/thread-29278971-1-1.html) | ✅ 已实测 |
+
+### 认证后实测记录（2026-10-23）
+
+只读探测。服务器自称 **`Coremail System IMap Server Ready(wo.cn[...])`**——
+即**与 163 同源的 Coremail 体系**。
+
+| 项 | 实测值 |
+|---|---|
+| TLS | TLSv1_3 / TLS13_AES_256_GCM_SHA384，rustls 系统根校验通过 |
+| 认证后能力集 | `APPENDLIMIT=20971520` `ID` `IMAP4rev1` `LITERAL+` `SPECIAL-USE` `STARTTLS` `UIDPLUS` `XLIST` |
+| IDLE | ❌ **没有**（只能轮询） |
+| CONDSTORE / QRESYNC / MOVE / NAMESPACE | ❌ 都没有（发 `NAMESPACE` 回 `BAD command not support`） |
+| UIDPLUS | ✅ 有 |
+| LIST-EXTENDED | ❌ 不宣告，但 **LIST 实际带 RFC 6154 属性**（`\Sent` / `\Drafts` / `\Trash` / `\Junk`） |
+| 文件夹 | 6 个，分隔符 `/`，名是英文：`Sent Items` / `Drafts` / `Trash` / `Junk E-mail` / `Virus Items` |
+| INBOX | 6 封 / 2 未读 / 2 RECENT |
+| UIDVALIDITY | 1 |
+| UIDNEXT | **不给**（与 163 一样） |
+| 永久标记 | `Answered` `Seen` `Deleted` `Draft` `Flagged` |
 
 **已知坑**
 
-- 沃邮箱基于 **Coxremail**（帮助中心在 `tz.mail.wo.cn/coxremail/help/`），与 163/QQ 体系完全不同。
-- 官方口径已改为"客户端登录必须使用授权码，不能使用原密码"。
+- **沃邮箱是 Coremail 体系**（帮助中心与 163 同源），
+  **不是**先前推测的 Coxremail 体系——实测问候行就是 `Coremail System IMap Server Ready(wo.cn[...])`。
+- 官方口径已改为“客户端登录必须使用授权码，不能使用原密码”。
 - 账号可以是**手机号**（如 `13012345678@wo.cn`）。
-- 需要实测：IDLE 是否支持、CONDSTORE 是否支持、授权码申请入口、错误提示文案。
+- **不需要先发 `ID`**：实测登录后直接 EXAMINE 就成功。
+  即：`ID` 是 **163 独有**的要求，不是 Coremail 家族的通例。
+- 无 UIDNEXT → 游标只能靠 UID 差分取最大 UID。
+- 文件夹名是**英文**，但 LIST 给了角色属性 → 角色识别靠属性即可。
 
 ---
 
@@ -354,8 +429,8 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 |---|---|---|---|---|---|
 | 163 | ❌ **实测无** | ❌ **实测无** | ❌ **实测无** | ✅ 实测有 | **只能用轮询**；无 CONDSTORE → 走「快照+意图重放」；无 MOVE → COPY+\Deleted+EXPUNGE；**无 UIDNEXT** → 游标靠 UID SEARCH/FETCH 取最大 UID；**必须先发 `ID`** |
 | 126 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | |
-| QQ | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | |
-| 沃邮箱 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | Coxremail 体系 |
+| QQ | ✅ **实测有** | ❌ **实测无** | ❌ **实测无** | ✅ 实测有 | **三家里唯一支持 IDLE 的**；无 CONDSTORE → 走「快照+意图重放」；**有 MOVE** → 可一步移动；**不发 RFC 6154 角色属性** → 文件夹角色靠名字认；**不需要先发 `ID`** |
+| 沃邮箱 | ❌ **实测无** | ❌ **实测无** | ❌ **实测无** | ✅ 实测有 | **Coremail 体系（与 163 同源，不是 Coxremail）**；无 MOVE → COPY + \Deleted + EXPUNGE；**不需要先发 `ID`**；无 NAMESPACE（发了回 `BAD`） |
 | Gmail | ✅ 预期支持 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | |
 | Exchange | ✅ 预期支持 | ⚠️ 待实测 | ⚠️ 待实测 | ⚠️ 待实测 | |
 

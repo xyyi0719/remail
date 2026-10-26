@@ -69,6 +69,18 @@ impl AccountCredential {
     }
 }
 
+/// 某个服务商的**默认邮箱域名**。
+///
+/// 只在 user 只写了本地部分（如 QQ 号）时用来补全。
+/// **不猜**：只有已知的服务商才有默认值；别的必须显式写 `domain = …`。
+fn default_domain_for(provider: &str) -> Option<&'static str> {
+    match provider.to_ascii_lowercase().as_str() {
+        // QQ 邮箱的地址就是 `QQ号@qq.com`。
+        "qq" => Some("qq.com"),
+        _ => None,
+    }
+}
+
 /// 凭据库：provider → 凭据。
 #[derive(Debug, Clone, Default)]
 pub struct CredentialStore {
@@ -89,15 +101,18 @@ impl CredentialStore {
         let mut current_provider: Option<String> = None;
         let mut current_user: Option<String> = None;
         let mut current_password: Option<String> = None;
+        let mut current_domain: Option<String> = None;
 
         let flush = |provider: &mut Option<String>,
                      user: &mut Option<String>,
                      password: &mut Option<String>,
+                     domain: &mut Option<String>,
                      accounts: &mut BTreeMap<String, AccountCredential>|
          -> Result<(), CredentialError> {
             let provider = provider.take();
             let user = user.take();
             let password = password.take();
+            let domain = domain.take();
 
             match (&provider, &user, &password) {
                 // 整个文件都是空的。
@@ -120,11 +135,33 @@ impl CredentialStore {
                             "provider = {p} 的段落里 user/password 为空"
                         )));
                     }
+
+                    // QQ 邮箱的登录名是**完整地址**（`号码@qq.com`），
+                    // 而用户习惯只写 QQ 号。这里补上域名——
+                    // 但**不能猜**：域名要么来自段落的 \`domain =\` 键，
+                    // 要么来自该服务商的已知默认值。
+                    let mut user = u.trim().to_string();
+                    if !user.contains('@') {
+                        let default = domain
+                            .as_deref()
+                            .map(str::to_string)
+                            .or_else(|| default_domain_for(p).map(str::to_string));
+                        match default {
+                            Some(suffix) => user = format!("{user}@{suffix}"),
+                            None => {
+                                return Err(CredentialError::Format(format!(
+                                    "provider = {p} 的 user 不含 @，且没有可用的域名\
+                                     （写完整地址，或加一行 domain = …）"
+                                )));
+                            }
+                        }
+                    }
+
                     accounts.insert(
                         p.clone(),
                         AccountCredential {
                             provider: p.clone(),
-                            user: u.trim().to_string(),
+                            user,
                             password: SecretValue::new(pw.trim().as_bytes().to_vec()),
                         },
                     );
@@ -146,6 +183,7 @@ impl CredentialStore {
                     &mut current_provider,
                     &mut current_user,
                     &mut current_password,
+                    &mut current_domain,
                     &mut accounts,
                 )?;
 
@@ -171,6 +209,8 @@ impl CredentialStore {
                 // 空值当作「没填」——模板里的空段落就是这么写的。
                 "user" => current_user = non_empty(value),
                 "password" => current_password = non_empty(value),
+                // 域名：user 只写了本地部分时补上。
+                "domain" => current_domain = non_empty(value),
                 // 未知键忽略（前向兼容）。
                 _ => {}
             }
@@ -180,6 +220,7 @@ impl CredentialStore {
             &mut current_provider,
             &mut current_user,
             &mut current_password,
+            &mut current_domain,
             &mut accounts,
         )?;
 
@@ -346,5 +387,53 @@ mod tests {
         let printed = format!("{:?}", store.get("163").unwrap());
 
         assert!(!printed.contains("secret123"), "授权码泄漏到了 Debug 输出");
+    }
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use super::CredentialStore;
+
+    #[test]
+    fn qq_number_gets_the_default_domain() {
+        // QQ 邮箱的登录名是完整地址，而用户习惯只写 QQ 号。
+        let store =
+            CredentialStore::parse("[qq]\nuser = 1234567890\npassword = abcdefghijklmnop\n")
+                .expect("解析应当成功");
+
+        let account = store.get("qq").expect("应当能取到");
+        assert_eq!(account.user, "1234567890@qq.com");
+    }
+
+    #[test]
+    fn full_address_is_left_alone() {
+        let store = CredentialStore::parse(
+            "[qq]\nuser = 1234567890@vip.qq.com\npassword = abcdefghijklmnop\n",
+        )
+        .expect("解析应当成功");
+
+        let account = store.get("qq").expect("应当能取到");
+        assert_eq!(account.user, "1234567890@vip.qq.com");
+    }
+
+    #[test]
+    fn explicit_domain_overrides_the_default() {
+        let store = CredentialStore::parse(
+            "[custom]\nuser = someone\ndomain = example.com\npassword = abcdefghijklmnop\n",
+        )
+        .expect("解析应当成功");
+
+        let account = store.get("custom").expect("应当能取到");
+        assert_eq!(account.user, "someone@example.com");
+    }
+
+    #[test]
+    fn bare_local_part_without_a_known_domain_is_an_error() {
+        // **不猜域名**：没有默认值又没有显式 domain → 报错。
+        let err =
+            CredentialStore::parse("[unknown]\nuser = someone\npassword = abcdefghijklmnop\n")
+                .expect_err("没有域名可用时必须报错");
+
+        assert!(err.to_string().contains("domain"), "实际错误是：{err}");
     }
 }
