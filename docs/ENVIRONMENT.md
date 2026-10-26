@@ -389,6 +389,34 @@ let pool = tauri::async_runtime::block_on(async {
 
 （这条与 §1.9.1/1.9.2 无关，是独立的一条。）
 
+### 1.10 Tauri IPC 测试的本地 origin 是**平台相关**的（2026-10-26 CI 首次推送时踩到）
+
+在 `tauri::test` 里手工构造 `InvokeRequest` 时，**`url` 必须是当前平台的本地 origin**：
+
+| 平台 | 本地 origin |
+|---|---|
+| Windows / Android | `http://tauri.localhost` |
+| 其它（Linux / macOS） | `tauri://localhost` |
+
+（出自 Tauri 的 `protocol::origin`：Windows 与 Android 用 `http(s)://{scheme}.localhost` 绕行，
+其它平台用 `{scheme}://localhost`。）
+
+**写错的后果**：请求被当成**远程来源**（`is_local = false`）→ 走 ACL 检查 →
+而 mock 应用的 ACL 是**空的** → 命令被一律拒绝：
+
+```text
+create_account not allowed. Plugin not found
+```
+
+**这个坑在 Windows 上看不见**（那里恰好硬编码对了），
+只有 Linux CI 才暴露。而本地 mock 应用的 ACL 为空是 Tauri 的设计
+（`mock_builder` 用 `Resolved::default()`），不是我们的配置问题。
+
+**验证手段**（不需要 Linux）：在 Windows 上把 URL 换成 `tauri://localhost`，
+应当立刻复现出同样的错误——这能证明机制判断没错。
+
+修法见 `apps/shell/src-tauri/tests/command_ipc.rs` 的 `local_origin()`。
+
 ---
 
 ## 2. 目标平台差异

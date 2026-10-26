@@ -56,13 +56,37 @@ fn app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
     (app, webview)
 }
 
+/// 本地 origin。
+///
+/// Tauri 的自定义协议 origin 是**平台相关**的
+/// （见 Tauri 的 `protocol::origin`）：
+///
+/// * Windows / Android：`http://tauri.localhost`
+///   （wry 在这两个平台上用 `http(s)://{scheme}.localhost` 绕行）
+/// * 其它平台：`tauri://localhost`
+///
+/// **写错的后果**：请求会被当成**远程来源**（`is_local = false`），
+/// 于是走 ACL 检查——而 mock 应用的 ACL 是**空的**，
+/// 命令会被一律拒绝：
+/// `create_account not allowed. Plugin not found`。
+///
+/// 这个坑**在 Windows 上看不见**（那里恰好硬编码对了），
+/// 只有 Linux CI 才暴露——2026-10-26 首次推送时就是这么发现的。
+fn local_origin() -> &'static str {
+    if cfg!(any(windows, target_os = "android")) {
+        "http://tauri.localhost"
+    } else {
+        "tauri://localhost"
+    }
+}
+
 /// 构造一个 IPC 请求。
 fn request(cmd: &str, body: serde_json::Value) -> InvokeRequest {
     InvokeRequest {
         cmd: cmd.to_string(),
         callback: CallbackFn(0),
         error: CallbackFn(1),
-        url: "http://tauri.localhost".parse().expect("URL 非法"),
+        url: local_origin().parse().expect("URL 非法"),
         body: InvokeBody::Json(body),
         headers: Default::default(),
         invoke_key: INVOKE_KEY.to_string(),

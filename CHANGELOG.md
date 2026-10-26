@@ -248,6 +248,14 @@
   - 凭据文件支持 `domain =` 键；QQ 只写 QQ 号时自动补 `@qq.com`
 
 ### Fixed
+- **Tauri IPC 测试在 Linux 上全挂**（2026-10-26 CI 首次推送时暴露）：
+  `tauri::test` 构造的 `InvokeRequest` 里 `url` 必须是**平台正确**的本地 origin
+  （Windows/Android 是 `http://tauri.localhost`，其它平台是 `tauri://localhost`）。
+  写错会被当成远程来源 → 走 ACL 检查 → mock 应用的 ACL 是空的 →
+  命令被一律拒绝（`not allowed. Plugin not found`）。
+  **这个坑在 Windows 上看不见**，只有 Linux CI 才暴露。
+  修法：`tests/command_ipc.rs` 的 `local_origin()`；
+  机制用「在 Windows 上换成 tauri://localhost 立刻复现」反向验证过。
 - **multipart 边界分隔符前面的 CRLF 没被去掉**（RFC 2046 §5.1.1）：
   导致每个部件的正文末尾多一个换行
 - **base64 解码遇到非字母表字符就整段失败**：

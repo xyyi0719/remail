@@ -55,7 +55,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        # --no-fail-fast：不让一个失败的测试二进制**掩盖后面**的失败。
+        # 默认行为是第一个失败就停，ubuntu 上曾经因此只看到 8 个失败，
+        # 而实际后面还可能有别的（2026-10-26）。
+        run: cargo test --workspace --no-fail-fast
 
       - name: Verify sqlx offline data
         # .sqlx/ 必须与迁移和查询保持同步：迁移改了 schema 而忘了重新
