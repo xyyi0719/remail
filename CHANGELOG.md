@@ -196,6 +196,18 @@
 - 文档作者/负责人署名为 xyyi0719
 
 ### Added
+- ** crate**：MIME 结构、字符集解码、RFC 5322 头
+  - ：UTF-8 / GB2312 / GBK / GB18030 / Big5 / ISO-8859-*（encoding_rs）
+  - 无 charset 时的**猜测**（先严格 UTF-8 → GB18030 → windows-1252）
+  - ：base64 / quoted-printable / 7bit / 8bit
+  - ：RFC 2047 编码字（含「相邻编码字之间空白要丢掉」）
+  - ：Content-Type 参数、multipart **递归**拆解、头字段折行
+  - ：整封邮件 → 主题 / 地址 / 日期 / 纯文本 / 原始 HTML / 附件标记
+  - **HTML 清洗不做**——那是渲染层的事（ARCHITECTURE §7）
+- ** crate**：诊断工具（同时用协议层与 MIME 层，
+  所以单独成 crate——这两层之间不应有依赖）
+  - ：只读抽样，只输出**编码名与计数**，
+    绝不打印主题 / 正文 / 地址
 - **QQ 与沃邮箱的实测记录**（2026-10-23）：三家国内服务商的协议事实已全部落到 `docs/PROTOCOLS.md`
   - **QQ 是三家里唯一支持 IDLE 的**（✅ 服务器接受 `+ idling`），也**有 MOVE**
   - **沃是 Coremail 体系**（与 163 同源），**不是**先前推测的 Coxremail
@@ -206,6 +218,10 @@
   - 凭据文件支持 `domain =` 键；QQ 只写 QQ 号时自动补 `@qq.com`
 
 ### Fixed
+- **multipart 边界分隔符前面的 CRLF 没被去掉**（RFC 2046 §5.1.1）：
+  导致每个部件的正文末尾多一个换行
+- **base64 解码遇到非字母表字符就整段失败**：
+  RFC 2045 §6.8 规定「不在 base64 字母表里的字符一律忽略」
 - **`1:*` 被展开成上亿个元素**（假服务器内存爆掉，8 GiB 分配失败）：
   sequence set 的 `resolve` 是**展开**语义，而 `1:*` 在大 UID 空间下
   （163 的 UID 就是 17 亿量级）会覆盖上亿个 UID。

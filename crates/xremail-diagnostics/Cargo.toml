@@ -1,0 +1,15 @@
+[package]
+name = "xremail-diagnostics"
+description = "Xremail developer diagnostics: tools that need both the IMAP and the MIME layers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+# 诊断工具同时用到**协议层**（IMAP）与**内容层**（MIME/charset），
+# 而这两层之间不应该有依赖关系——所以工具单独成 crate。
+xremail-protocol-imap = { path = "../xremail-protocol-imap" }
+xremail-message = { path = "../xremail-message" }
+tokio = { workspace = true }

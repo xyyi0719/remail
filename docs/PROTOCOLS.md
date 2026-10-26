@@ -444,12 +444,26 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 
 ## 字符集矩阵
 
-| 服务商 | 常见 charset | 无 charset 时 | 备注 |
-|---|---|---|---|
-| 163 / 126 | GB2312 / GBK / GB18030 | 极可能是 GBK | 必须用 GB18030 解码（超集） |
-| QQ | UTF-8 为主，也有 GBK | 需嗅探 | |
-| 沃邮箱 | 推测 GBK | 需嗅探 | Coxremail |
-| Gmail | UTF-8 | 基本不会 | |
+> **2026-10-23 已实测**（三家各抽 20 封，只统计编码名，不打印内容）。
+
+| 服务商 | 正文 charset（实测） | 主题 charset（实测） | 顶层 multipart | 传输编码 |
+|---|---|---|---|---|
+| 163 | `utf-8`×4 | `utf-8`×4 | 4/4 | — |
+| QQ | **`gb18030`×1、[`gb2312`×5**]、`utf-8`×14 | `gb2312`×2、`utf-8`×12 | 15/20 | `quoted-printable`×5、`8bit`×1 |
+| 沃邮箱 | **`gbk`×4**、`utf-8`×2 | `gbk`×1、`utf-8`×5 | 5/6 | `7bit`×1 |
+| Gmail | UTF-8（预期） | UTF-8 | | |
+
+**结论**
+
+1. **GB2312 / GBK / GB18030 三种都要支持**——QQ 用 gb2312 *和* gb18030，沃用 gbk。
+2. **只看顶层 `Content-Type` 会看错**：三家的邮件**顶层几乎都是 multipart**，
+   正文的 charset 在**子部分**里。必须**递归**拆解。
+   （顶层没有 charset ≠ 正文没有 charset——递归后三家都是 0 封缺失。）
+3. **传输编码**：quoted-printable / 8bit / 7bit 都要处理。
+4. 主题**全部**用 RFC 2047 编码字，charset 与正文可能不同。
+
+**实测验证**：用 `xremail-message` 解析三家共 30 封真实邮件，
+**解码出错 0 封**（没有出现 U+FFFD 替换字符）。
 
 **解码顺序（`xremail-message` 必须严格遵守）**
 
