@@ -188,6 +188,21 @@
 - `xremail-core` 的 `Folder` 新增 `uidvalidity` 字段（该文件夹的 **epoch**）：它本来就是领域概念（ARCHITECTURE §4.3 要求按 epoch 切换游标），此前模型里没有，DAO 无法往返
 
 ### Changed
+- **文档与代码对齐（2026-10-23）**——此前文档比代码落后了好几轮：
+  - `docs/ROADMAP.md`：P0 剩余项（跨表事务封装、升级路径测试）已完成；
+    P1 的「沃邮箱待实测」「QQ 与沃未开始」「T5」「按需正文」均已完成；
+    P2 拆成「已实现」与「仍缺」；「下一批任务」按依赖顺序重写
+  - `docs/ISSUES_AND_RISKS.md`：§1 的「workspace 只有 core 与 shell」等描述已过时；
+    R01/R02/R03 转为已实测/已实现；R04/R07/R09/R12/R13 转为部分实现；
+    **新增 R17**（13 个提交从未推送）与 **R18**（SMTP 参数未实测）；
+    复核记录补 2026-10-23 一行
+  - `docs/ARCHITECTURE.md`：模块表补 `xremail-message` / `xremail-diagnostics`，
+    修好 `xremail-sync` 那行被吃掉换行的表格；
+    §4.2 / §5 / §6 补「实现落点」，把实测得来的约束写进正文
+  - `docs/TESTING_STRATEGY.md`：T1–T10 加状态列；新增 §5.1.1
+    「用**变异测试**证明用例有效」（四轮共 29 个变异）
+  - `docs/PROTOCOLS.md`：163 章的「仍待实测」清单里字符集抽样已补测
+  - `README.md`：当前状态段重写（阶段徽标从「P0 脚手架」改为实际状态）
 - **R13 决策：release profile 的 panic 策略由 `abort` 改为 `unwind`**
   - 理由：P0 开始引入 tokio 异步任务，`abort` 下任一 panic 会终止整个进程，后台同步任务无法用 `catch_unwind` 兜底；现在改成本最低，体积代价很小
   - 保留的配套要求：后台 task 边界需 `catch_unwind`（待 `xremail-sync` 落地时实现）

@@ -235,8 +235,15 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 | **`HIGHESTMODSEQ` 会让命令失败** | `STATUS INBOX (HIGHESTMODSEQ)` → `BAD Parse command error`（与不支持 CONDSTORE 一致）。**不要**无条件请求它 |
 | `STATUS` 可用的项 | `MESSAGES` `RECENT` `UNSEEN` `UIDVALIDITY` ✅；`UIDNEXT` 空；`HIGHESTMODSEQ` ❌ |
 
-**仍待实测**：邮件头字符集抽样（GBK/GB18030）、
-`BODY.PEEK` 是否真的不置 `\Seen`、并发连接上限、IDLE 不可用时的服务端行为。
+**仍待实测**：并发连接上限、IDLE 不可用时的服务端行为、SMTP 提交行为。
+
+**已补测（2026-10-23）**：
+
+- **邮件头字符集抽样**：163 的正文 charset 全是 `utf-8`（4/4 封），
+  主题也是 `utf-8`；顶层**全是 multipart**（4/4）⇒ 只看顶层看不到正文 charset。
+  三家的完整对照见 [字符集矩阵](#字符集矩阵)。
+- **`BODY.PEEK` 不置 `\Seen`**：已在假服务器上实现并用端到端用例钉住
+  （`BODY.PEEK[]` 不改标记，`BODY[]` 会改）。三家真实邮箱的实测仍待做。
 
 **已知坑**
 

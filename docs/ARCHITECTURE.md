@@ -17,20 +17,22 @@
 
 ## 2. 模块与依赖
 
-当前只有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync`、`xremail-protocol-imap`、`xremail-testkit` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前已有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync`、`xremail-protocol-imap`、`xremail-message`、`xremail-testkit`、`xremail-diagnostics` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|
 | xremail-core | 领域模型、错误、事件、身份/操作类型 | 不依赖 sqlx/tokio/tauri |
 | xremail-api | 应用服务 DTO、L2 最小契约 | 不实现网络；不强迫其他模块反向依赖 UI |
 | xremail-store | SQLite、迁移、事务、检索投影、操作队列 | 不发网络请求 |
-| xremail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试 |
+| xremail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试；**不依赖 xremail-message** |
 | xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once |
-| xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/core，不认识 Tauri || xremail-message | MIME/charset、构建、HTML 清洗 | 不直接落库或加载远程资源 |
+| xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/message/core，不认识 Tauri |
+| xremail-message | MIME 结构、charset 解码、RFC 5322 头 | 不落库、不加载远程资源；**不做 HTML 清洗**（渲染层的事） |
 | xremail-provider | 可覆盖预设、接入诊断 | 企业邮箱需管理员配置，不能按品牌猜服务器 |
 | xremail-crypto | 成熟密码库封装、版本化密文格式 | 不自行实现密码算法；不承担所有平台钥匙串职责 |
 | 平台 SecretStore 适配器 | Windows/Android 等安全存储 | 与可选远端 VaultStore 分离 |
-| xremail-testkit | 假服务器、合成样本、故障注入 | 测试专用 |
+| xremail-testkit | 假服务器、合成样本、故障注入 | 测试专用；生产代码不得依赖 |
+| xremail-diagnostics | 需要同时用协议层与内容层的诊断工具 | 生产代码不得依赖 |
 | shell | 组合根、Command/Event、窗口/平台生命周期 | Command 薄封装，业务在服务层 |
 
 依赖基线：`shell → 应用服务/编排 → store、protocol、message、provider → core`。
@@ -112,6 +114,29 @@ RFC Message-ID 只能作线索，不能作为唯一键或自动跨文件夹去�
 
 初次同步优先摘要与最近邮件，不默认下载全部附件。性能指标必须区分摘要、正文与附件。
 
+**实现落点（2026-10-23，`crates/xremail-sync/src/pull.rs`）**：第 3–6 步已实现并有端到端测试
+（假 IMAP 服务器 × 真客户端 × 真实 SQLite）：
+
+- 第 2 步用**协议层的安全 `examine_checked`**（服务器拒绝时一定报错）；
+  拿不到 UIDVALIDITY 就**报错**而不是猜一个（没有 epoch 就无法定位邮件）。
+- 第 3 步：`plan_epoch_transition` 判定；epoch 变了走 4.3。
+- 第 4 步：远端 UID 集合用 `UID FETCH 1:* (UID)`——**FETCH 是必备命令，SEARCH 是可选扩展**；
+  然后 `diff_uids` 作差；拉取时带上 `BODY.PEEK[HEADER]`（头），
+  解析出主题 / 发件人 / 日期 / Message-ID 一并落库。
+- 第 5 步：正文**按需**拉（`BODY.PEEK[]`，见 `crates/xremail-sync/src/body.rs`）——
+  正文可能很大且带附件，一个邮箱几千封全拉一遍既慢又费流量。
+- 第 6 步：服务器已删的 UID 清缓存；**本地草稿的保留策略**由 `UidDiff::retain_local` 落实。
+- 第 7 步（进入 IDLE 或轮询）**尚未实现**——调度器还不存在。
+
+**三条实测得来的实现约束（2026-10-23）**：
+
+* **远端 UID 集合不要用 `UID SEARCH ALL`**：163 与沃虽实现了 SEARCH，但它在 RFC 3501 里是
+  **可选**扩展；`UID FETCH` 才是必备命令。
+* **`1:*` 在大 UID 空间下不能展开**：163 的 UID 是 17 亿量级，
+  把 sequence set 展开成列表会吃掉几个 GB——要**逐个问 `contains`**。
+* **文件夹角色不能只靠 RFC 6154 属性**：**QQ 不给**（只给 `\NoSelect` / `\HasChildren`），
+  必须准备**按名字**的兼底（`Sent Messages` / `Drafts` / `Deleted Messages` / `Junk`）。
+
 ### 4.3 UIDVALIDITY 变化
 
 在一个数据库事务内切换 epoch、失效旧 UID 映射与游标、隔离绑定旧 epoch 的 pending 操作。
@@ -147,6 +172,14 @@ UIDVALIDITY 不得为 0（RFC 3501），收到 0 视为协议错误。
 
 Message-ID、稳定操作 ID 有助于排查，但不能保证 SMTP 去重。明确不承诺网络故障下 exactly-once。
 
+**实现落点（2026-10-23）**：状态枚举已定在 `xremail-core::model::OperationState`
+（六态，取值与 `mail_operation.state` 列一致）；`xremail-store::dao::operation` 提供入队、
+列未完结操作、更新状态。**目前只实现了 flag 类操作**——
+move / delete / append / SMTP 尚未定义（等假服务器补齐 COPY / MOVE / APPEND）。
+
+「UI 可立即显示带 pending 标识的本地结果」这条**尚未落地**：
+前端现在只显示账户，没有邮件列表。
+
 ## 6. flag 并发语义
 
 服务器快照与本地待提交意图分开保存。`+Seen` 和 `-Seen` 可以冲突，并非“单 bit 都幂等所以没有冲突”。
@@ -164,6 +197,20 @@ Message-ID、稳定操作 ID 有助于排查，但不能保证 SMTP 去重。明
 其余只含真正变化的位，**不整组替换 FLAGS**。绑定旧 epoch 的意图进 `FlagPlan::stale`，不参与计算。
 服务器回 `MODIFIED` 后，客户端用新快照重调 `plan_flag_update` 即可重算，
 次数上限见 `MAX_REPLAN_ATTEMPTS`。
+
+**实现落点（2026-10-23，`crates/xremail-sync/src/push.rs` + `crates/xremail-store/src/dao/operation.rs`）**：
+
+* **意图单独落库**（`mail_operation` 表），状态机六态：
+  `queued` / `running` / `succeeded` / `retryable` / `failed` / `uncertain`。
+  这些取值**就是 DB 列的取值**，改枚举名要配数据迁移。
+* 同一封信上多个意图的定序靠 `seq`（本地单调序号）——**不能用 `created_at`**：
+  同一毫秒里的两个意图会撞号。
+* 提交流程：读快照 → 重放意图算净变化 → 发 `UID STORE` → **回读确认**。
+  回读只核对**自己动过的那几个位**（服务器上别的位，比如 `\Recent`，不归我们管）。
+* **三种失败分得很清**（见 §2.2）：服务器回 `NO` → `retryable`；
+  回 `NO [MODIFIED]` → `retryable`（重新读快照重算，**有界**）；
+  连接断了 / 超时 → **`uncertain`**。
+* 绑定旧 epoch 的操作**隔离**为 `failed`，绝不套用到新 UID 上。
 
 ## 7. 检索模型
 

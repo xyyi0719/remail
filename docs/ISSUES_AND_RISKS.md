@@ -6,10 +6,20 @@
 
 ## 1. 事实、推断、待验证
 
-- **仓库事实**：workspace 目前只有 `xremail-core` 与 Tauri shell；`list_accounts` 返回空列表；没有 SQLite 迁移、同步引擎或实际收发能力。
-- **规划**：其他 crate、测试设施、加密服务均不是已交付功能。
-- **外部未知**：国内服务商能力、并发连接限制、Android 后台行为，必须用注明环境的实测建立证据。
-- `cargo test` 成功但用例数极少（当前仅 `xremail-core` 错误分类的 4 个用例），只证明测试命令可执行，不证明业务正确。扩写计划见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。
+- **仓库事实**（2026-10-23）：workspace 有 10 个 crate——`xremail-core` / `xremail-store` /
+  `xremail-crypto` / `xremail-api` / `xremail-sync` / `xremail-protocol-imap` /
+  `xremail-message` / `xremail-testkit` / `xremail-diagnostics` + Tauri shell。
+  SQLite 迁移与 DAO、同步引擎的**拉取与回写**链路、IMAP 协议层、假 IMAP 服务器均已落地；
+  **收发仍未实现**（SMTP 一行没写）。
+- **实测事实**：163 / QQ / 沃三家真实邮箱均已只读实测（TLS、能力集、IDLE/MOVE/CONDSTORE、
+  UID 空间、字符集、文件夹角色），记录见 [PROTOCOLS.md](PROTOCOLS.md)。
+  30 封真实邮件用 `xremail-message` 解析，**解码零错误**。
+- **规划**：发送（P3）、平台适配（P4）、标签/规则（P5）、L2 远端同步（P6）**都不是已交付功能**。
+- **外部未知**：SMTP 服务器参数与提交行为、并发连接限制、Android 后台行为——
+  必须用注明环境的实测建立证据。
+- `cargo test` 现在有 **387 个用例**（2026-10-23），六关本地全绿。
+  但**本地全绿 ≠ CI 跑绿**：仓库有 13 个提交**从未推送**，
+  CI 从未在这批代码上执行过（见 R14、R17）。
 - 2026-10-20 复核：Rust 1.99.1 / Node 22.21.0 / 本机仅 JDK 8 且无 Android SDK → **Android 构建在本机暂不可行**（P4 需先装 JDK 17 + SDK/NDK）。
 
 ## 2. 对上一版审查的纠错
@@ -36,22 +46,24 @@
 
 | ID | 归属 | 风险/缺口 | 严重度 | 处理门槛与证据 | 状态 |
 |---|---|---|---|---|---|
-| R01 | 外部接入 | 沃邮箱的服务器地址与授权码流程未实测确认 | 高 | 只读 probe、TLS 校验、认证后 CAPABILITY、脱敏记录；不能把未测项改成不支持 | 待验证 |
-| R02 | 外部接入 | 163/QQ/沃邮箱的能力与认证行为未实测 | 高 | 同上；分别记录三家，不互相推断 | 待验证 |
-| R03 | 数据正确性 | UIDVALIDITY 变更会使旧 UID 操作指向错误邮件 | 高 | 同一事务更换 epoch、失效旧缓存/游标；旧 epoch 操作隔离，测试崩溃恢复 | 待实现 |
-| R04 | 数据正确性 | flag 并发、移动、删除、发送的重试语义未定义 | 高 | 按 ARCHITECTURE 的操作状态与不确定结果策略测试 | 待实现 |
-| R05 | 数据正确性 | FTS 正文晚到、索引不一致、中文短查询 | 中 | 投影事务、重建校验、1/2 字查询策略测试 | 待实现 |
-| R06 | 安全边界 | HTML/CSS/URL 可绕过图片阻断或调用宿主能力 | 高 | 清洗 + 默认禁网 CSP + WebView 网络/IPC 测试；安全门槛先于真实 HTML 展示 | 待实现 |
-| R07 | 安全边界 | 钥匙串后端与失败语义、日志脱敏未落地 | 高 | 平台 SecretStore 契约测试；失败不明文落盘 | 待实现 |
-| R08 | 运行平台 | Android 生命周期、后台预算与通知不确定 | 中 | 早期最小真机 PoC；前台同步可用不代表可后台常驻 | 待验证 |
-| R09 | 运行平台 | 首次同步与大附件耗尽内存/磁盘 | 中 | 有界批量/队列、取消、配额、超限测试，指标注明硬件与网络 | 待实现 |
-| R10 | 工程验证 | AI 编造 API、测试只复述实现、无独立预期 | 高 | TESTING_STRATEGY 与 AI_DEVELOPMENT_GUIDE 的证据门槛 | 规范已定义，待执行 |
+| R01 | 外部接入 | 沃邮箱的服务器地址与授权码流程未实测确认 | 高 | 只读 probe、TLS 校验、认证后 CAPABILITY、脱敏记录；不能把未测项改成不支持 | **已实测**（2026-10-23：`imap.wo.cn:993` TLSv1.3、授权码登录成功、**Coremail 体系**、无 IDLE/MOVE/CONDSTORE；授权码**申请入口**仍待确认） |
+| R02 | 外部接入 | 163/QQ/沃邮箱的能力与认证行为未实测 | 高 | 同上；分别记录三家，不互相推断 | **已实测**（2026-10-23，三家分别记录于 [PROTOCOLS.md](PROTOCOLS.md)；关键差异：QQ 独有 IDLE+MOVE、163 必须先发 `ID`、沃也是 Coremail 但不要求 `ID`） |
+| R03 | 数据正确性 | UIDVALIDITY 变更会使旧 UID 操作指向错误邮件 | 高 | 同一事务更换 epoch、失效旧缓存/游标；旧 epoch 操作隔离，测试崩溃恢复 | **已实现**（`plan_epoch_transition` + `commit_folder_sync` 单事务切换；旧 epoch 操作隔离为 `failed`。用例：`epoch_change_triggers_a_rebuild`、`operations_bound_to_the_old_epoch_are_quarantined`。**崩溃恢复测试仍缺**） |
+| R04 | 数据正确性 | flag 并发、移动、删除、发送的重试语义未定义 | 高 | 按 ARCHITECTURE 的操作状态与不确定结果策略测试 | **部分实现**：flag 并发已定（「读快照 → 重放意图 → **回读确认**」，三种失败分类 `retryable`/`uncertain`/`failed`，见 ARCHITECTURE §2.2）；**移动 / 删除 / 发送仍未定义**（P3） |
+| R05 | 数据正确性 | FTS 正文晚到、索引不一致、中文短查询 | 中 | 投影事务、重建校验、1/2 字查询策略测试 | 待实现（P2） |
+| R06 | 安全边界 | HTML/CSS/URL 可绕过图片阻断或调用宿主能力 | 高 | 清洗 + 默认禁网 CSP + WebView 网络/IPC 测试；安全门槛先于真实 HTML 展示 | 待实现（P2）。**当前状态是安全的**：`xremail-message` 只产出**未经清洗的原始 HTML**，没有任何渲染路径 |
+| R07 | 安全边界 | 钥匙串后端与失败语义、日志脱敏未落地 | 高 | 平台 SecretStore 契约测试；失败不明文落盘 | **部分实现**：契约与 mock 已有（`xremail-api::SecretStore`）；诊断工具**不打印凭据/地址**（脱敏已验证）；**平台后端与失败语义未落地**（P4） |
+| R08 | 运行平台 | Android 生命周期、后台预算与通知不确定 | 中 | 早期最小真机 PoC；前台同步可用不代表可后台常驻 | 待验证（P4） |
+| R09 | 运行平台 | 首次同步与大附件耗尽内存/磁盘 | 中 | 有界批量/队列、取消、配额、超限测试，指标注明硬件与网络 | **部分实现**：有界批量已有（每批 200 个 UID；曾因 `1:*` 展开成 1.79 亿个元素把假服务器撑爆 8 GiB，已修）；**大附件、配额、取消未做**（P3） |
+| R10 | 工程验证 | AI 编造 API、测试只复述实现、无独立预期 | 高 | TESTING_STRATEGY 与 AI_DEVELOPMENT_GUIDE 的证据门槛 | **已执行**（2026-10-23）：每批改动都跑**变异测试**——把实现改坏看用例会不会失败，累计 30/30 被捕获；另有假服务器与真实邮箱两条独立证据链。门槛见 [AI_DEVELOPMENT_GUIDE §4](AI_DEVELOPMENT_GUIDE.md) |
 | R11 | 范围治理 | 文档把计划当事实，旧策略与新范围冲突 | 中 | ROADMAP 为执行范围入口；旧报告标废止；变更附验收证据 | 本轮修订 |
-| R12 | 可选扩展 | L2 接口过早冻结、远端冲突与密钥恢复未定义 | 中 | P0 最小契约 + mock；P6 前另做威胁模型，不承诺零返工 | 待实现 |
-| R13 | 运行平台 | release profile 用 `panic = "abort"`，后台同步任务 panic 会杀掉整个应用 | 中 | **已决策（2026-10-22）**：改为 `unwind`；配套要求后台 task 边界 `catch_unwind`，待 `xremail-sync` 落地时实现 | 已决策，待配套实现 |
-| R14 | 工程验证 | CI 无业务测试，静态检查通过不代表行为正确 | 高 | 按 [TESTING_STRATEGY §5](TESTING_STRATEGY.md) 的 T1–T10 顺序扩写用例；每阶段出口要求对应测试；用例数作为进度指标写入 CHANGELOG | 已开始 |
+| R12 | 可选扩展 | L2 接口过早冻结、远端冲突与密钥恢复未定义 | 中 | P0 最小契约 + mock；P6 前另做威胁模型，不承诺零返工 | **部分实现**（契约 + CAS mock + 双设备竞争用例已就位；远端密钥恢复仍未定义，P6 前另做威胁模型） |
+| R13 | 运行平台 | release profile 用 `panic = "abort"`，后台同步任务 panic 会杀掉整个应用 | 中 | **已决策（2026-10-22）**：改为 `unwind`；配套要求后台 task 边界 `catch_unwind`，待 `xremail-sync` 落地时实现 | **部分实现**：profile 已改 `unwind`；**后台 task 边界还没建**（调度器未开始），`catch_unwind` 暂无落点 |
+| R14 | 工程验证 | CI 无业务测试，静态检查通过不代表行为正确 | 高 | 按 [TESTING_STRATEGY §5](TESTING_STRATEGY.md) 的 T1–T10 顺序扩写用例；每阶段出口要求对应测试；用例数作为进度指标写入 CHANGELOG | **进行中**：T1–T5 已扩写（387 个用例），T7 的假服务器已就位；**但 CI 从未在这批代码上跑绿**（见 R17） |
+| R17 | 工程交付 | 13 个提交**从未推送到 GitHub**：全部成果只在本机磁盘上 | 高 | 推送前做 `git ls-remote` / `gh auth status` 连通性探测（本机 github.com 的 DNS 常被劫持到 127.0.0.1）；推送后核对远端提交号 | **未处理**：按约定推送需显式授权 |
+| R18 | 外部接入 | 三家的 **SMTP** 服务器参数与提交行为未实测 | 高 | 同 R01/R02；重点测授权码认证、`STARTTLS` 语义、`8BITMIME`、发信后的 `APPEND` 行为 | 待验证（P3） |
 | R16 | 协议层 | imap-proto 0.17 **不认识** `MODIFIED` 这个 response code（它的 `ResponseCode` 枚举里没有），且对未知 code 用 `opt()` 解析——整个 `[MODIFIED] …` 会落进 information 文本。所以条件写失败只能**按文本判别**，拿不到结构化的 code | 中 | 协议层新增 `ProtocolError::ConditionFailed`，按文本判别并写进注释；将来升级 imap-proto 时复核 | 已缓解 |
-| R15 | 协议层 | async-imap 0.12 **吞掉**服务器回的 `NO` / `BAD`：`uid_fetch` / `uid_store` / `uid_search` 在服务器拒绝时返回 `Ok`（只是结果为空），同步引擎会把「服务器拒绝了」当成「写成功了」，本地状态与远端悄悄分叉 | **高** | 新增安全命令层 `xremail_protocol_imap::run_checked`（自己读响应、自己判定 OK/NO/BAD，错误带 response code）；**同步引擎一律用它，不用 async-imap 的同名方法**；已用假服务器把该行为钉成用例 | 已缓解（待同步引擎接入时复核） |
+| R15 | 协议层 | async-imap 0.12 **吞掉**服务器回的 `NO` / `BAD`：`uid_fetch` / `uid_store` / `uid_search` 在服务器拒绝时返回 `Ok`（只是结果为空），同步引擎会把「服务器拒绝了」当成「写成功了」，本地状态与远端悄悄分叉 | **高** | 新增安全命令层 `xremail_protocol_imap::run_checked`（自己读响应、自己判定 OK/NO/BAD，错误带 response code）；**同步引擎一律用它，不用 async-imap 的同名方法**；已用假服务器把该行为钉成用例 | 已缓解（同步引擎已全面改用 `run_checked`；用例：`server_rejection_is_an_error_not_a_mass_delete`） |
 
 ## 4. 处理顺序
 
@@ -71,5 +83,6 @@
 | 日期 | 范围 | 结论 |
 |---|---|---|
 | 2026-10-20 | 全部 17 个 Markdown、Rust 与前端代码、CI 配置 | 修正 `ctx()` 丢失错误分类、代码注释中的断链与过期章节号、workspace resolver、作者署名；新增 `xremail-core` 4 个单测 |
+| 2026-10-23 | 全部 13 个本地提交、10 个 crate、387 个用例 | R01/R02/R03 转为已实测/已实现；新增 R17（提交未推送）与 R18（SMTP 未实测）；修正 §1 里「workspace 只有 core 与 shell」等已过时的描述；为每条状态变更附上用例或提交名作为证据 |
 
 相关：[架构](ARCHITECTURE.md) · [路线图](ROADMAP.md) · [测试策略](TESTING_STRATEGY.md)

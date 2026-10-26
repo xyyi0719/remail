@@ -10,18 +10,27 @@
 
 ## 当前状态
 
-> **v0.1.0 · P0 脚手架阶段**（2026-10）
+> **v0.1.0 · P0 已出关 / P1 只读链路完成**（2026-10-23）
 >
-> 工程骨架已生成，架构持续复核，协议与持久化业务尚未实现。当前设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+> 架构持续复核。当前设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 > 2026-10-23 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（387 个用例）/ `npm typecheck` / `npm build` 均通过。
-> 存储层（`xremail-store`）、密文封装（`xremail-crypto`）、L2 契约（`xremail-api`）、同步纯函数（`xremail-sync`）、IMAP 协议层（`xremail-protocol-imap`）、内容解析（`xremail-message`）与假服务器（`xremail-testkit`）已落地，同步引擎的**拉取与回写**链路已打通；**尚未接入应用**（`list_accounts` 仍返回硬编码空列表）。
+>
+> **已落地**：存储层（`xremail-store`）、密文封装（`xremail-crypto`）、L2 契约（`xremail-api`）、
+> 同步引擎（`xremail-sync`）、IMAP 协议层（`xremail-protocol-imap`）、
+> 内容解析（`xremail-message`）、假服务器（`xremail-testkit`）。
+> 同步引擎的**拉取**与**回写**两条链路已打通（头随拉取、正文按需、标记回读确认）。
+>
+> **三家真实邮箱均已只读实测**（163 / QQ / 沃），协议事实见 [docs/PROTOCOLS.md](docs/PROTOCOLS.md)。
+>
+> **尚未接入应用**：UI 里只有账户列表，看不到邮件；发信（SMTP）未开始。
+> 另有 13 个提交**从未推送到 GitHub**，CI 未在这批代码上跑过。
 > 想看进度：[docs/ROADMAP.md](docs/ROADMAP.md)
 
 | 状态 |
 |---|---|
-| P0 骨架与地基 | 🟡 进行中 |
-| P1 账户接入与收信 | ⬜ |
-| P2 同步引擎与阅读 | ⬜ |
+| P0 骨架与地基 | ✅ 已出关 |
+| P1 账户接入与收信 | 🟡 只读链路完成，未接入应用 |
+| P2 同步引擎与阅读 | 🟡 引擎已完成，缺调度器与 HTML 安全门 |
 | P3 发信与草稿 | ⬜ |
 | P4 平台化与实时推送 | ⬜ |
 | P5 增值功能 | ⬜ |
