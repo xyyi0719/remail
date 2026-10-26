@@ -31,12 +31,11 @@ use xremail_core::model::{Folder, Message, MessageFlags};
 use xremail_core::{AppError, AppResult};
 use xremail_protocol_imap::{CommandOutcome, ProtocolError, Session, examine_checked};
 
+use crate::diff::{UidSet, diff_uids};
+use crate::epoch::{EpochTransition, StoredEpoch, plan_epoch_transition};
 use crate::net::run_checked_with_timeout;
 use xremail_store::dao::message as message_dao;
 use xremail_store::dao::sync::{FolderSyncWrite, commit_folder_sync};
-
-use crate::diff::{UidSet, diff_uids};
-use crate::epoch::{EpochTransition, StoredEpoch, plan_epoch_transition};
 
 /// 一轮文件夹同步的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +74,7 @@ impl FolderSyncReport {
 ///
 /// 保留「可重试 / 需用户处理」的分类：
 /// 认证失败要用户处理，网络抖动可以重试。
-fn map_protocol_error(error: ProtocolError) -> AppError {
+pub(crate) fn map_protocol_error(error: ProtocolError) -> AppError {
     match error {
         ProtocolError::Auth(detail) => AppError::Auth(detail),
         ProtocolError::Io(detail) => AppError::Network(detail),
@@ -215,7 +214,11 @@ async fn fetch_remote_uids(session: &mut Session) -> AppResult<UidSet> {
     Ok(UidSet::from_uids(uids))
 }
 
-/// 拉取一批 UID 的元数据（标记与大小）。
+/// 拉取一批 UID 的元数据（标记、大小与**头**）。
+///
+/// 带上头是因为列表视图要显示主题、发件人、日期——
+/// 它们都在头里，而头很小（几 KB）。
+/// **正文不在这里拉**（按需拉，见 [`crate::body::fetch_body`]）。
 async fn fetch_metadata(
     session: &mut Session,
     uids: &[i64],
@@ -226,7 +229,7 @@ async fn fetch_metadata(
     let mut out = Vec::new();
     for batch in uids.chunks(BATCH) {
         let set = build_uid_set(batch);
-        let command = format!("UID FETCH {set} (UID FLAGS RFC822.SIZE)");
+        let command = format!("UID FETCH {set} (UID FLAGS RFC822.SIZE BODY.PEEK[HEADER])");
         let outcome = run_checked_with_timeout(session, &command)
             .await
             .map_err(map_protocol_error)?;
@@ -285,20 +288,28 @@ fn to_domain_message(
     uidvalidity: i64,
     item: &xremail_protocol_imap::FetchedMessage,
 ) -> Message {
+    // 头里才有主题 / 发件人 / 日期。
+    let headers = item
+        .header
+        .as_ref()
+        .map(|raw| xremail_message::parse_headers(raw))
+        .unwrap_or_default();
+
     Message {
         id: uuid::Uuid::new_v4().to_string(),
         account_id: folder.account_id.clone(),
         folder_id: folder.id.clone(),
         uid: i64::from(item.uid.unwrap_or(0)),
         uidvalidity,
-        message_id: None,
-        subject: None,
+        message_id: headers.message_id,
+        subject: headers.subject,
+        // 摘要先留空：它要靠正文，切开才知道。
         snippet: None,
-        from: Vec::new(),
-        to: Vec::new(),
-        cc: Vec::new(),
-        bcc: Vec::new(),
-        date_sent: None,
+        from: headers.from,
+        to: headers.to,
+        cc: headers.cc,
+        bcc: headers.bcc,
+        date_sent: headers.date,
         internal_date: None,
         flags: flags_from_imap(&item.flags),
         size: item.size.map(i64::from),

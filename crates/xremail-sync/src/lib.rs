@@ -32,6 +32,7 @@
 //!
 //! `xremail-sync` → `xremail-core`。不认识 Tauri，也不认识 UI。
 
+pub mod body;
 pub mod diff;
 pub mod epoch;
 pub mod intent;
@@ -39,6 +40,7 @@ pub mod net;
 pub mod pull;
 pub mod push;
 
+pub use body::{fetch_body, read_body};
 pub use diff::{UidDiff, UidSet, diff_uids};
 pub use epoch::{EpochTransition, PendingOperationBinding, StoredEpoch, plan_epoch_transition};
 pub use intent::{

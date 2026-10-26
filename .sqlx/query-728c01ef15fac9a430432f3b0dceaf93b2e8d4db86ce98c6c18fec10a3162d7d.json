@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT message_id, text_plain, html_raw, charset\n        FROM message_body\n        WHERE message_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "message_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message_body",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "text_plain",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message_body",
+            "name": "text_plain"
+          }
+        }
+      },
+      {
+        "name": "html_raw",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message_body",
+            "name": "html_raw"
+          }
+        }
+      },
+      {
+        "name": "charset",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message_body",
+            "name": "charset"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "728c01ef15fac9a430432f3b0dceaf93b2e8d4db86ce98c6c18fec10a3162d7d"
+}

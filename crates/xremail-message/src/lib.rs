@@ -30,7 +30,9 @@ pub mod encoded_word;
 pub mod mime;
 pub mod transfer;
 
-pub use body::{MessageError, ParsedMessage, parse_addresses, parse_message};
+pub use body::{
+    MessageError, ParsedHeaders, ParsedMessage, parse_addresses, parse_headers, parse_message,
+};
 pub use charset::{decode, decode_lossy, encoding_for_label, guess_encoding, normalize_label};
 pub use encoded_word::decode_encoded_words;
 pub use mime::{ContentType, HeaderMap, Part, parse_content_type, split_parts};

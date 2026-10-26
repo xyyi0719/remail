@@ -16,6 +16,10 @@ pub struct MessageFixture {
     pub flags: Vec<String>,
     /// 完整邮件（RFC 822 文本：头 + 空行 + 正文）。
     pub content: String,
+    /// 整封邮件的**原始字节**（覆盖 `content`）。
+    ///
+    /// 用于测试非 UTF-8 编码：头部是 ASCII，正文是 GBK 字节。
+    pub raw: Option<Vec<u8>>,
     /// 修改序号（CONDSTORE）。
     ///
     /// 每次标记变更都会 +1；`UNCHANGEDSINCE` 条件写就是比对这个值。
@@ -29,6 +33,7 @@ impl MessageFixture {
             uid,
             flags: Vec::new(),
             content: default_content(uid, "测试邮件", ""),
+            raw: None,
             modseq: 1,
         }
     }
@@ -71,6 +76,12 @@ impl MessageFixture {
         self.with_header("Date", date)
     }
 
+    /// 整封邮件用给定的**原始字节**。
+    pub fn with_raw(mut self, raw: Vec<u8>) -> Self {
+        self.raw = Some(raw);
+        self
+    }
+
     /// 设置正文。
     pub fn with_body(self, body: &str) -> Self {
         let separator = head_body_separator(&self.content);
@@ -106,6 +117,32 @@ impl MessageFixture {
     /// 整封邮件文本。
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    /// 整封邮件的**字节**（有原始字节就用它）。
+    pub fn bytes(&self) -> Vec<u8> {
+        match &self.raw {
+            Some(raw) => raw.clone(),
+            None => self.content.as_bytes().to_vec(),
+        }
+    }
+
+    /// 头部分的**字节**。
+    ///
+    /// 原始字节模式下，头也按字节切（头一般是 ASCII，但正文不一定是）。
+    pub fn header_bytes(&self) -> Vec<u8> {
+        match &self.raw {
+            Some(raw) => split_head_body_bytes(raw).0,
+            None => self.header().as_bytes().to_vec(),
+        }
+    }
+
+    /// 正文部分的**字节**。
+    pub fn body_bytes(&self) -> Vec<u8> {
+        match &self.raw {
+            Some(raw) => split_head_body_bytes(raw).1,
+            None => self.body().as_bytes().to_vec(),
+        }
     }
 
     /// 头部分（到第一个空行为止）。
@@ -396,6 +433,28 @@ impl ServerConfig {
             _ => false,
         })
     }
+}
+
+/// 把原始字节拆成 `(头, 正文)`（以第一个空行为界）。
+fn split_head_body_bytes(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let separator = if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+        4
+    } else if raw.windows(2).any(|w| w == b"\n\n") {
+        2
+    } else {
+        return (raw.to_vec(), Vec::new());
+    };
+
+    for index in 0..raw.len() {
+        if raw[index..].starts_with(b"\r\n\r\n") {
+            return (raw[..index].to_vec(), raw[index + separator..].to_vec());
+        }
+        if raw[index..].starts_with(b"\n\n") {
+            return (raw[..index].to_vec(), raw[index + separator..].to_vec());
+        }
+    }
+
+    (raw.to_vec(), Vec::new())
 }
 
 #[cfg(test)]

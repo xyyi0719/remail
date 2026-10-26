@@ -6207,6 +6207,7 @@ dependencies = [
  "tracing",
  "uuid",
  "xremail-core",
+ "xremail-message",
  "xremail-protocol-imap",
  "xremail-store",
  "xremail-testkit",

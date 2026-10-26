@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO message_body (message_id, text_plain, html_raw, charset)\n        VALUES (?, ?, ?, ?)\n        ON CONFLICT (message_id) DO UPDATE SET\n            text_plain = excluded.text_plain,\n            html_raw   = excluded.html_raw,\n            charset    = excluded.charset\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "edc36ff96f4dd8785e8ca84c050020c640cf1c9c46ca7f1583ec5438bd11e959"
+}

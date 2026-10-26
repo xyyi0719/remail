@@ -27,9 +27,13 @@ pub enum MessageError {
     Undecodable(String),
 }
 
-/// 解析后的邮件。
+/// 解析后的**头字段**。
+///
+/// 单独拆出来是因为两种场景：
+/// * 同步时只拉 `BODY[HEADER]`（头）——没有正文；
+/// * 按需拉正文时拉整封——头与正文一起。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ParsedMessage {
+pub struct ParsedHeaders {
     /// 主题（已解码 RFC 2047）。
     pub subject: Option<String>,
     /// 发件人。
@@ -44,6 +48,13 @@ pub struct ParsedMessage {
     pub date: Option<i64>,
     /// `Message-ID`（不含尖括号）。
     pub message_id: Option<String>,
+}
+
+/// 解析后的邮件。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParsedMessage {
+    /// 头字段。
+    pub headers: ParsedHeaders,
     /// 纯文本正文。
     pub text_plain: Option<String>,
     /// **原始** HTML（未清洗）。
@@ -60,22 +71,37 @@ pub struct ParsedMessage {
     pub decode_errors: bool,
 }
 
+/// 只解析头。
+///
+/// 输入可以是**整封**邮件，也可以只是头块（`BODY[HEADER]` 的结果）。
+pub fn parse_headers(raw: &[u8]) -> ParsedHeaders {
+    let (headers, _) = split_head_body(raw);
+    parse_header_map(&headers)
+}
+
+/// 解析头字段块。
+fn parse_header_map(headers: &HeaderMap) -> ParsedHeaders {
+    ParsedHeaders {
+        subject: decode_subject(headers),
+        from: parse_address_list(headers, "From"),
+        to: parse_address_list(headers, "To"),
+        cc: parse_address_list(headers, "Cc"),
+        bcc: parse_address_list(headers, "Bcc"),
+        date: parse_date(headers),
+        message_id: headers
+            .get("Message-ID")
+            .map(|value| value.trim().trim_matches(['<', '>']).to_string())
+            .filter(|value| !value.is_empty()),
+    }
+}
+
 /// 解析一封邮件。
 pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MessageError> {
     let (headers, body) = split_head_body(raw);
     let parts = split_parts(&headers, &body);
 
     let mut parsed = ParsedMessage {
-        subject: decode_subject(&headers),
-        from: parse_address_list(&headers, "From"),
-        to: parse_address_list(&headers, "To"),
-        cc: parse_address_list(&headers, "Cc"),
-        bcc: parse_address_list(&headers, "Bcc"),
-        date: parse_date(&headers),
-        message_id: headers
-            .get("Message-ID")
-            .map(|value| value.trim().trim_matches(['<', '>']).to_string())
-            .filter(|value| !value.is_empty()),
+        headers: parse_header_map(&headers),
         ..Default::default()
     };
 
@@ -293,11 +319,14 @@ mod tests {
 
         let parsed = parse_message(raw).expect("应当能解析");
 
-        assert_eq!(parsed.subject.as_deref(), Some("主题"));
-        assert_eq!(parsed.from.len(), 1);
-        assert_eq!(parsed.from[0].email, "sender@example.com");
-        assert_eq!(parsed.to[0].email, "me@example.com");
-        assert_eq!(parsed.message_id.as_deref(), Some("abc@example.com"));
+        assert_eq!(parsed.headers.subject.as_deref(), Some("主题"));
+        assert_eq!(parsed.headers.from.len(), 1);
+        assert_eq!(parsed.headers.from[0].email, "sender@example.com");
+        assert_eq!(parsed.headers.to[0].email, "me@example.com");
+        assert_eq!(
+            parsed.headers.message_id.as_deref(),
+            Some("abc@example.com")
+        );
         assert_eq!(parsed.text_plain.as_deref(), Some("正文内容"));
         assert_eq!(parsed.charset.as_deref(), Some("utf-8"));
         assert!(!parsed.has_attachment);
@@ -321,7 +350,7 @@ mod tests {
 
         let parsed = parse_message(&raw).expect("应当能解析");
 
-        assert_eq!(parsed.subject.as_deref(), Some("中文"));
+        assert_eq!(parsed.headers.subject.as_deref(), Some("中文"));
         assert_eq!(parsed.text_plain.as_deref(), Some("中文"));
         assert_eq!(parsed.html_raw.as_deref(), Some("<p>中文</p>"));
         assert_eq!(parsed.charset.as_deref(), Some("gb2312"));

@@ -60,11 +60,20 @@ SQLX_OFFLINE=false DATABASE_URL="sqlite://target/xremail-dev.db" \
 | `crates/xremail-store` | SQL、迁移、DAO | 网络调用 |
 | `crates/xremail-sync` | 同步状态机、调度、outbox | UI 相关的一切 |
 | `crates/xremail-protocol-*` | 协议细节 | 数据库、业务规则 |
+| `crates/xremail-message` | MIME 结构、charset 解码、RFC 5322 头 | HTML 清洗（渲染层的事）、落库、远程资源 |
+| `crates/xremail-testkit` | 假服务器、合成样本、故障注入 | 生产代码 |
+| `crates/xremail-diagnostics` | 需要同时用协议层与内容层的诊断工具 | 生产代码 |
 | `crates/xremail-api` | trait 与 DTO | 实现（实现放各领域 crate） |
 | `apps/shell/src-tauri` | Command、Event、平台集成 | 业务规则（应在 crate 里） |
 | `apps/shell/src` | React 组件、路由、样式 | 协议细节、SQL、凭据处理 |
 
 **依赖方向铁律**：`xremail-core` ← 一切；`xremail-api` ← 一切；UI → `xremail-api`；`xremail-sync` 不认识 UI。
+
+另外两条实测出来的：
+
+* `xremail-sync` **可以**依赖 `store` / `protocol` / `message`（它要把拉回来的东西解析并落库），但**不得**依赖 `xremail-testkit`（那是测试替身）。
+* `xremail-protocol-imap` **不得**依赖 `xremail-message`——协议层只管线路格式。
+  需要同时用两者的工具放到 `xremail-diagnostics`。
 
 ---
 

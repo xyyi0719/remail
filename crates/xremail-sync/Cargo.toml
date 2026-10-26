@@ -11,6 +11,8 @@ authors.workspace = true
 xremail-core = { workspace = true }
 xremail-store = { workspace = true }
 xremail-protocol-imap = { workspace = true }
+# 解析拉回来的邮件（charset / MIME）。
+xremail-message = { path = "../xremail-message" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

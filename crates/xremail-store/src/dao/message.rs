@@ -13,7 +13,7 @@
 use sqlx::FromRow;
 use sqlx::SqlitePool;
 use xremail_core::AppResult;
-use xremail_core::model::Message;
+use xremail_core::model::{Message, MessageBody};
 
 use crate::codec::{addresses_from_json, addresses_to_json};
 use crate::error::map_sqlx;
@@ -330,6 +330,84 @@ pub async fn update_message_flags(
     Ok(result.rows_affected() > 0)
 }
 
+/// `message_body` 表的一行。
+#[derive(Debug, Clone, FromRow)]
+#[sqlx(rename_all = "snake_case")]
+struct MessageBodyRow {
+    message_id: String,
+    text_plain: Option<String>,
+    html_raw: Option<String>,
+    charset: Option<String>,
+}
+
+/// 写入（或覆盖）一封邮件的正文。
+///
+/// 正文**单独存**——列文件夹时不会碰到大文本列
+/// （见 [ARCHITECTURE §4.2](../../../../docs/ARCHITECTURE.md)）。
+pub async fn upsert_message_body(pool: &SqlitePool, body: &MessageBody) -> AppResult<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO message_body (message_id, text_plain, html_raw, charset)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (message_id) DO UPDATE SET
+            text_plain = excluded.text_plain,
+            html_raw   = excluded.html_raw,
+            charset    = excluded.charset
+        "#,
+        body.message_id,
+        body.text_plain,
+        body.html_raw,
+        body.charset,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "upsert_message_body"))?;
+
+    Ok(())
+}
+
+/// 取一封邮件的正文。
+pub async fn get_message_body(
+    pool: &SqlitePool,
+    message_id: &str,
+) -> AppResult<Option<MessageBody>> {
+    let row = sqlx::query_as!(
+        MessageBodyRow,
+        r#"
+        SELECT message_id, text_plain, html_raw, charset
+        FROM message_body
+        WHERE message_id = ?
+        "#,
+        message_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "get_message_body"))?;
+
+    Ok(row.map(|row| MessageBody {
+        message_id: row.message_id,
+        text_plain: row.text_plain,
+        html_raw: row.html_raw,
+        charset: row.charset,
+    }))
+}
+
+/// 统计某账户里已经存了多少封正文。
+pub async fn count_message_bodies(pool: &SqlitePool, account_id: &str) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) FROM message_body
+        WHERE message_id IN (SELECT id FROM message WHERE account_id = ?)
+        "#,
+        account_id
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "count_message_bodies"))?;
+
+    Ok(count)
+}
+
 /// 按远端身份（账户 + 文件夹 + epoch + UID）改一封邮件的标记。
 ///
 /// 同步层回写标记后用它把本地视图对齐到**服务器确认过的状态**。
@@ -355,6 +433,33 @@ pub async fn update_message_flags_by_uid(
     .execute(pool)
     .await
     .map_err(|e| map_sqlx(e, "update_message_flags_by_uid"))?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// 按远端身份更新「有附件」标记。
+pub async fn update_has_attachment_by_uid(
+    pool: &SqlitePool,
+    account_id: &str,
+    folder_id: &str,
+    uidvalidity: i64,
+    uid: i64,
+    has_attachment: bool,
+) -> AppResult<bool> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE message SET has_attachment = ?
+        WHERE account_id = ? AND folder_id = ? AND uidvalidity = ? AND uid = ?
+        "#,
+        has_attachment,
+        account_id,
+        folder_id,
+        uidvalidity,
+        uid
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "update_has_attachment_by_uid"))?;
 
     Ok(result.rows_affected() > 0)
 }

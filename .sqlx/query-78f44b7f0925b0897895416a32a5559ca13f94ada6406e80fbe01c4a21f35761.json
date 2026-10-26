@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT COUNT(*) FROM message_body\n        WHERE message_id IN (SELECT id FROM message WHERE account_id = ?)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "78f44b7f0925b0897895416a32a5559ca13f94ada6406e80fbe01c4a21f35761"
+}

@@ -393,14 +393,15 @@ pub fn build_fetch_response(
 /// 取 `BODY[...]` 的内容。
 ///
 /// 返回 `(响应里的段落名, 字节)`。
+///
+/// **注意**：`BODY[]` 是**整封邮件**（含头），`BODY[TEXT]` 才是纯正文
+/// （RFC 3501 §6.4.8）。弄错的话客户端会把正文当成整封邮件去解析。
 fn body_section_content(message: &MessageFixture, section: &BodySection) -> (String, Vec<u8>) {
     match section {
-        BodySection::Full => ("BODY[]".to_string(), message.content().as_bytes().to_vec()),
-        BodySection::Header => (
-            "BODY[HEADER]".to_string(),
-            message.header().as_bytes().to_vec(),
-        ),
-        BodySection::Text => ("BODY[TEXT]".to_string(), message.body().as_bytes().to_vec()),
+        // `BODY[]` —— 整封（头 + 正文）。
+        BodySection::Full => ("BODY[]".to_string(), message.bytes()),
+        BodySection::Header => ("BODY[HEADER]".to_string(), message.header_bytes()),
+        BodySection::Text => ("BODY[TEXT]".to_string(), message.body_bytes()),
         BodySection::HeaderFields(fields) => {
             let mut text = String::new();
             for field in fields {

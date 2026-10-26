@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE message SET has_attachment = ?\n        WHERE account_id = ? AND folder_id = ? AND uidvalidity = ? AND uid = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "694e5ed8ee2dd4230398cf1a45fbe264449b41a9d04624ccbefe3c9d3e8c368c"
+}

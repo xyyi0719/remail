@@ -7,6 +7,21 @@
 ## [Unreleased]
 
 ### Added
+- **头与正文接进同步引擎**
+  - 拉取阶段拉 `BODY.PEEK[HEADER]`（头）→ 落主题 / 发件人 / 收件人 / 日期 / Message-ID
+  - **正文按需拉**（`BODY.PEEK[]`）→ 落 `message_body` 表
+    （正文可能很大且带附件，一个邮箱几千封全拉一遍既慢又费流量）
+  - 用 `BODY.PEEK[]` 而不是 `BODY[]`：后者会**置上 `\Seen`**，
+    而「看正文」不一定等于「标记已读」
+  - `xremail-message` 拆出 `ParsedHeaders`：拉头时没有正文
+  - 存储层新增 `message_body` DAO 与 `update_has_attachment_by_uid`
+- **`xremail-testkit` 的邮件夹具支持原始字节**（`with_raw`）：
+  用于测非 UTF-8 编码（GBK 正文）
+
+### Fixed
+- **假服务器把 `BODY[]` 当成只有正文**：
+  RFC 3501 §6.4.8 里 `BODY[]` 是**整封邮件**（含头），`BODY[TEXT]` 才是纯正文。
+  弄错的话客户端会把正文当成整封邮件去解析
 - **P0 出关：Command → 服务 → SQLite → React 真实列表**（不再返回硬编码空列表）
   - 启动时解析数据目录（桌面 `%APPDATA%/com.xremail.app`，Android app 内部存储）、
     打开连接池并**应用迁移**；迁移失败则启动失败——**不降级**为空库或旧库
