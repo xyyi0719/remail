@@ -149,74 +149,6 @@ const STANDARD_FOLDERS: &[&str] = &[
     "IMPORTANT",
 ];
 
-/// 按**名字**认特殊用途角色的兼底表。
-///
-/// ## 为什么需要兼底
-///
-/// RFC 6154 的特殊用途属性**不是所有服务器都给**：
-///
-/// * 163 给（`\Sent` / `\Drafts` / `\Trash` / `\Junk`）；
-/// * 沃也给；
-/// * **QQ 不给**——实测它的 LIST 只返回 `\NoSelect` / `\HasChildren`，
-///   哪怕它宣告了 XLIST。
-///
-/// 所以同步引擎认「已发送 / 草稿箱 / 垃圾邮件」不能只靠属性，
-/// 还得认名字。这张表来自三家服务商的**实测**（2026-10-23）。
-///
-/// 匹配时先**去掉尾部的空白与常见的分隔符**（如 `Junk E-mail`）。
-const ROLE_NAMES: &[(&str, &str)] = &[
-    // 163（中文名 + 属性，这两个都能命中）。
-    ("已发送", "sent"),
-    ("发送邮件", "sent"),
-    ("草稿箱", "drafts"),
-    ("草稿", "drafts"),
-    ("已删除", "trash"),
-    ("已删除邮件", "trash"),
-    ("垃圾邮件", "junk"),
-    ("垃圾箱", "junk"),
-    // QQ（英文名，**没有属性**，只能靠名字）。
-    ("sent messages", "sent"),
-    ("sent message", "sent"),
-    ("drafts", "drafts"),
-    ("draft", "drafts"),
-    ("deleted messages", "trash"),
-    ("deleted message", "trash"),
-    ("trash", "trash"),
-    ("junk", "junk"),
-    ("junk e-mail", "junk"),
-    ("spam", "junk"),
-    // 沃（英文名，**有属性**，名字兼底也能命中）。
-    ("sent items", "sent"),
-    ("sent item", "sent"),
-    ("deleted items", "trash"),
-    ("deleted item", "trash"),
-];
-
-/// 按名字识别特殊用途角色。
-fn role_by_name(name: &str) -> Option<&'static str> {
-    // 去掉首尾空白，并把全角空格也当空白。
-    let trimmed = name.trim();
-    let lower = trimmed.to_lowercase();
-
-    for (candidate, role) in ROLE_NAMES {
-        if lower == *candidate {
-            return Some(role);
-        }
-    }
-
-    // 再试一次「去掉尾部标点」的版本（如 `Sent Messages.`）。
-    let stripped = lower.trim_end_matches(['.', '!', '。', '！']);
-    if stripped != lower {
-        for (candidate, role) in ROLE_NAMES {
-            if stripped == *candidate {
-                return Some(role);
-            }
-        }
-    }
-
-    None
-}
-
 /// 执行只读探测。
 pub async fn probe(
     config: &ProbeConfig,
@@ -435,7 +367,7 @@ fn summarize_folders(mailboxes: Vec<async_imap::types::Name>) -> FolderSummary {
 
         // 特殊用途属性（RFC 6154）。服务器**不**宣告 LIST-EXTENDED，
         // 但 SPECIAL-USE 仍可能随 LIST 响应给出。
-        let role = detect_role(mailbox);
+        let role = crate::folders::detect_role(mailbox);
         let show_name = is_standard || role.as_deref() != Some("other");
         summary.roles.push(FolderRole {
             role: role.clone().unwrap_or_else(|| "other".to_string()),
@@ -458,83 +390,4 @@ fn summarize_folders(mailboxes: Vec<async_imap::types::Name>) -> FolderSummary {
     summary.standard.sort();
     summary.roles.sort_by(|a, b| a.role.cmp(&b.role));
     summary
-}
-
-/// 识别文件夹的特殊用途角色。
-fn detect_role(mailbox: &async_imap::types::Name) -> Option<String> {
-    use imap_proto::NameAttribute;
-
-    for attribute in mailbox.attributes() {
-        let role = match attribute {
-            NameAttribute::All => "all",
-            NameAttribute::Archive => "archive",
-            NameAttribute::Drafts => "drafts",
-            NameAttribute::Flagged => "flagged",
-            NameAttribute::Junk => "junk",
-            NameAttribute::Sent => "sent",
-            NameAttribute::Trash => "trash",
-            _ => continue,
-        };
-        return Some(role.to_string());
-    }
-
-    // 没有特殊用途属性时，按**名字**认。
-    //
-    // QQ 就是一个例子：它的 LIST 只给 `\NoSelect` / `\HasChildren`，
-    // 不给 RFC 6154 的角色属性（实测 2026-10-23）。
-    let name = crate::utf7::decode(mailbox.name()).unwrap_or_else(|_| mailbox.name().to_string());
-    if name.eq_ignore_ascii_case("INBOX") {
-        return Some("inbox".to_string());
-    }
-    if let Some(role) = role_by_name(&name) {
-        return Some(role.to_string());
-    }
-
-    None
-}
-
-#[cfg(test)]
-mod role_tests {
-    use super::role_by_name;
-
-    #[test]
-    fn qq_names_are_recognized_without_attributes() {
-        // QQ 的 LIST 不给 RFC 6154 属性（实测 2026-10-23），
-        // 所以角色**必须**能按名字认出来。
-        assert_eq!(role_by_name("Sent Messages"), Some("sent"));
-        assert_eq!(role_by_name("Drafts"), Some("drafts"));
-        assert_eq!(role_by_name("Deleted Messages"), Some("trash"));
-        assert_eq!(role_by_name("Junk"), Some("junk"));
-    }
-
-    #[test]
-    fn wo_names_are_recognized() {
-        assert_eq!(role_by_name("Sent Items"), Some("sent"));
-        assert_eq!(role_by_name("Drafts"), Some("drafts"));
-        assert_eq!(role_by_name("Trash"), Some("trash"));
-        assert_eq!(role_by_name("Junk E-mail"), Some("junk"));
-    }
-
-    #[test]
-    fn netease_chinese_names_are_recognized() {
-        assert_eq!(role_by_name("已发送"), Some("sent"));
-        assert_eq!(role_by_name("草稿箱"), Some("drafts"));
-        assert_eq!(role_by_name("已删除"), Some("trash"));
-        assert_eq!(role_by_name("垃圾邮件"), Some("junk"));
-    }
-
-    #[test]
-    fn matching_ignores_case_and_trailing_punctuation() {
-        assert_eq!(role_by_name("sent messages"), Some("sent"));
-        assert_eq!(role_by_name("DRAFTS"), Some("drafts"));
-        assert_eq!(role_by_name("Junk."), Some("junk"));
-        assert_eq!(role_by_name("  Trash  "), Some("trash"));
-    }
-
-    #[test]
-    fn unknown_names_have_no_role() {
-        assert_eq!(role_by_name("Virus Items"), None);
-        assert_eq!(role_by_name("其他文件夹"), None);
-        assert_eq!(role_by_name(""), None);
-    }
 }

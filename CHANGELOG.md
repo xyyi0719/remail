@@ -7,6 +7,23 @@
 ## [Unreleased]
 
 ### Added
+- **同步引擎接进应用（UI 里能看到真实邮箱的邮件）**
+  - 服务层：`MessageService`（文件夹 / 邮件列表 / 正文）与 `SyncService`（一次同步）
+  - Command：`sync_account` / `list_folders` / `list_messages` / `open_message`
+  - 前端：账户 → 点「同步」（当场填授权码）→ 文件夹 → 邮件列表 → 正文
+  - **凭据不落盘**：授权码只在这次同步里驻留内存，用完即弃
+    （平台钥匙串属 P4，见 SECURITY §2.1）；`account.secret_ref` 保持 `NULL`
+  - 一次同步是**有界**的：连接 → 登录 → 逐个文件夹拉取 → 断开
+    （还没有调度器 / AccountActor，不做常驻连接）
+  - 文件夹名在库里存**线路原样**（modified UTF-7），显示时再解码——
+    见下面那条 Fixed
+- **真实邮箱端到端验收**（2026-10-26，脱敏证据）：
+  - 163：6 个文件夹 / 4 封 / 正文 charset utf-8
+  - QQ：6 个文件夹 / 71 封 / 正文 charset gb2312
+  - 沃：6 个文件夹 / 6 封 / 正文 charset gbk
+  - 三家的正文解码**零替换字符**（U+FFFD），即 charset 策略在真实邮件上正确
+- **诊断工具 `xremail-sync-smoke`**：用真实账号跑一遍「连接 → 同步 → 落库 → 读正文」，
+  只输出统计（文件夹数 / 邮件数 / 字符集），**不打印**凭据、地址、主题与正文
 - **头与正文接进同步引擎**
   - 拉取阶段拉 `BODY.PEEK[HEADER]`（头）→ 落主题 / 发件人 / 收件人 / 日期 / Message-ID
   - **正文按需拉**（`BODY.PEEK[]`）→ 落 `message_body` 表
@@ -19,6 +36,21 @@
   用于测非 UTF-8 编码（GBK 正文）
 
 ### Fixed
+- **EXAMINE 必须用线路上的原名（modified UTF-7）**——两个真 bug，靠真实邮箱才暴露：
+  - 症状：163 的 6 个文件夹只同步出 1 个（INBOX），其余 5 个回
+    `NO EXAMINE Folder not exist`
+  - 根因：`LIST` 返回的名字是 UTF-7 形式（`&XfJT0ZAB-`），解码成「草稿箱」后
+    拿去 `EXAMINE`，服务器只认自己给出的那个形式
+  - 修法：库里存**线路原样**（`folder.remote_name`），显示时再解码
+    （新增 `FolderDto`，`name` 解码、`rawName` 保留原样）
+  - 这条是 IMAP 的通病，不是 163 独有
+- **UID 是邮箱作用域的**：会话当前选中的邮箱是另一个文件夹时，
+  `UID FETCH <uid>` 返回**空结果**（不是报错）——于是「拉到了 0 封」
+  看起来像「服务器上没有这封邮件」
+  - 症状：正文一直拉不到（`fetch_body` 静默返回 `false`）
+  - 修法：`fetch_body` 拉之前先 `EXAMINE` 对应文件夹
+  - 回归用例：`body_is_fetched_even_when_the_session_is_on_another_folder`
+    （变异测试确认：去掉那句 EXAMINE，该用例会失败）
 - **假服务器把 `BODY[]` 当成只有正文**：
   RFC 3501 §6.4.8 里 `BODY[]` 是**整封邮件**（含头），`BODY[TEXT]` 才是纯正文。
   弄错的话客户端会把正文当成整封邮件去解析

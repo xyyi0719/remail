@@ -34,11 +34,20 @@ use crate::pull::map_protocol_error;
 /// 返回 `true` 表示拉到了（并已落库），`false` 表示服务器上没有这封邮件。
 ///
 /// **幂等**：重复调用会覆盖已有的正文。
+///
+/// ## 为什么要先 EXAMINE
+///
+/// **UID 只在它自己的邮箱里有意义**。会话当前选中的邮箱是另一个文件夹时，
+/// `UID FETCH <uid>` 会返回**空结果**（不是报错）——于是「拉到了 0 封」看起来像
+/// 「服务器上没有这封邮件」。
+///
+/// 所以拉正文前**必须**把会话切到 `remote_name` 那个文件夹。
 pub async fn fetch_body(
     pool: &SqlitePool,
     session: &mut Session,
     account_id: &str,
     folder_id: &str,
+    remote_name: &str,
     uid: i64,
     uidvalidity: i64,
 ) -> AppResult<bool> {
@@ -51,7 +60,14 @@ pub async fn fetch_body(
         return Ok(false);
     };
 
-    // 2. 拉整封（PEEK：不置 \Seen）。
+    // 2. 打开对应的文件夹（只读，不置 \Seen）。
+    //
+    // 少了这一步，服务器会拿**当前选中的邮箱**去查这个 UID → 返回空结果。
+    xremail_protocol_imap::examine_checked(session, remote_name)
+        .await
+        .map_err(map_protocol_error)?;
+
+    // 3. 拉整封（PEEK：不置 \Seen）。
     let command = format!("UID FETCH {uid} (UID BODY.PEEK[])");
     let outcome = run_checked_with_timeout(session, &command)
         .await
@@ -67,7 +83,7 @@ pub async fn fetch_body(
         return Ok(false);
     };
 
-    // 3. 解析（charset 猜测与 MIME 递归都在里面）。
+    // 4. 解析（charset 猜测与 MIME 递归都在里面）。
     let parsed = xremail_message::parse_message(raw)
         .map_err(|e| xremail_core::AppError::Protocol(format!("解析邮件失败: {e}")))?;
 

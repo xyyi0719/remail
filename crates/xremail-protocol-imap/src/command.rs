@@ -81,6 +81,21 @@ pub enum CommandOutcome {
     Fetches(Vec<FetchedMessage>),
     /// `SEARCH` 的结果（UID 或序号，取决于命令）。
     Search(Vec<u32>),
+    /// `LIST` 的结果。
+    List(Vec<ListedMailbox>),
+}
+
+/// `LIST` 返回的一个文件夹。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedMailbox {
+    /// 文件夹名（**未解码**——线路上是 modified UTF-7）。
+    pub raw_name: String,
+    /// 层级分隔符。
+    pub delimiter: Option<String>,
+    /// RFC 6154 特殊用途属性（`\Sent` / `\Drafts` / …）。
+    pub attributes: Vec<String>,
+    /// 由属性或名字识别出的特殊用途角色。
+    pub role: Option<String>,
 }
 
 impl CommandOutcome {
@@ -96,6 +111,14 @@ impl CommandOutcome {
     pub fn search(&self) -> &[u32] {
         match self {
             CommandOutcome::Search(ids) => ids,
+            _ => &[],
+        }
+    }
+
+    /// LIST 的结果。
+    pub fn list(&self) -> &[ListedMailbox] {
+        match self {
+            CommandOutcome::List(mailboxes) => mailboxes,
             _ => &[],
         }
     }
@@ -168,6 +191,7 @@ pub async fn run_checked(
 
     let mut fetches: Vec<FetchedMessage> = Vec::new();
     let mut search: Vec<u32> = Vec::new();
+    let mut list: Vec<ListedMailbox> = Vec::new();
 
     loop {
         let response = session
@@ -186,6 +210,9 @@ pub async fn run_checked(
             Response::MailboxData(imap_proto::MailboxDatum::Search(ids)) => {
                 search.extend(ids.iter().copied());
             }
+            Response::MailboxData(imap_proto::MailboxDatum::List(data)) => {
+                list.push(parse_listed_mailbox(data));
+            }
             Response::Done {
                 tag,
                 status,
@@ -200,6 +227,8 @@ pub async fn run_checked(
                         CommandOutcome::Fetches(fetches)
                     } else if !search.is_empty() {
                         CommandOutcome::Search(search)
+                    } else if !list.is_empty() {
+                        CommandOutcome::List(list)
                     } else {
                         CommandOutcome::Empty
                     }),
@@ -260,6 +289,33 @@ fn outcome_information(outcome: &imap_proto::Outcome<'_>) -> String {
         .map(|text| text.to_string())
         .unwrap_or_else(|| "(无)".to_string());
     format!("{code}{text}")
+}
+
+/// 解析一条 `LIST` 响应。
+fn parse_listed_mailbox(data: &imap_proto::MailboxListData<'_>) -> ListedMailbox {
+    let raw_name = data.name.to_string();
+    let attributes: Vec<String> = data
+        .name_attributes
+        .iter()
+        .map(|attribute| format!("{attribute:?}"))
+        .collect();
+
+    // 角色识别：属性优先，名字兜底（QQ 不给属性）。
+    let role = crate::folders::role_from_attributes(&data.name_attributes).or_else(|| {
+        let decoded = crate::utf7::decode(&raw_name).unwrap_or_else(|_| raw_name.clone());
+        if decoded.eq_ignore_ascii_case("INBOX") {
+            Some("inbox".to_string())
+        } else {
+            crate::folders::role_by_name(&decoded).map(str::to_string)
+        }
+    });
+
+    ListedMailbox {
+        raw_name,
+        delimiter: data.delimiter.as_ref().map(|d| d.to_string()),
+        attributes,
+        role,
+    }
 }
 
 /// 解析一条 FETCH 响应。

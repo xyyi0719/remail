@@ -191,9 +191,17 @@ async fn body_is_fetched_on_demand() {
     assert_eq!(count, 0, "拉取阶段不该拉正文");
 
     // 按需拉。
-    let ok = fetch_body(&pool, &mut session, "acct-1", "folder-1", 1_792_658_702, 1)
-        .await
-        .expect("拉正文应当成功");
+    let ok = fetch_body(
+        &pool,
+        &mut session,
+        "acct-1",
+        "folder-1",
+        "INBOX",
+        1_792_658_702,
+        1,
+    )
+    .await
+    .expect("拉正文应当成功");
     assert!(ok);
 
     let body = read_body(&pool, "acct-1", "folder-1", 1_792_658_702, 1)
@@ -216,9 +224,17 @@ async fn body_fetch_does_not_set_seen() {
         .await
         .expect("首次同步应当成功");
 
-    fetch_body(&pool, &mut session, "acct-1", "folder-1", 1_792_658_702, 1)
-        .await
-        .expect("拉正文应当成功");
+    fetch_body(
+        &pool,
+        &mut session,
+        "acct-1",
+        "folder-1",
+        "INBOX",
+        1_792_658_702,
+        1,
+    )
+    .await
+    .expect("拉正文应当成功");
 
     let messages = message_dao::list_messages(&pool, "acct-1", "folder-1")
         .await
@@ -278,9 +294,17 @@ async fn gbk_body_is_decoded_correctly() {
     assert_eq!(messages[0].subject.as_deref(), Some("中文"));
 
     // 正文是 GBK 字节 → 也要解出中文。
-    fetch_body(&pool, &mut session, "acct-1", "folder-1", 1_792_658_701, 1)
-        .await
-        .expect("拉正文应当成功");
+    fetch_body(
+        &pool,
+        &mut session,
+        "acct-1",
+        "folder-1",
+        "INBOX",
+        1_792_658_701,
+        1,
+    )
+    .await
+    .expect("拉正文应当成功");
 
     let body = read_body(&pool, "acct-1", "folder-1", 1_792_658_701, 1)
         .await
@@ -321,9 +345,17 @@ async fn attachment_flag_is_stored() {
     pull_folder(&pool, &mut session, &folder, 1_000)
         .await
         .expect("首次同步应当成功");
-    fetch_body(&pool, &mut session, "acct-1", "folder-1", 1_792_658_701, 1)
-        .await
-        .expect("拉正文应当成功");
+    fetch_body(
+        &pool,
+        &mut session,
+        "acct-1",
+        "folder-1",
+        "INBOX",
+        1_792_658_701,
+        1,
+    )
+    .await
+    .expect("拉正文应当成功");
 
     let messages = message_dao::list_messages(&pool, "acct-1", "folder-1")
         .await
@@ -344,10 +376,77 @@ async fn fetching_body_of_unknown_message_is_false() {
         .expect("首次同步应当成功");
 
     // 本地没有这封 → 不报错，只是「没有」。
-    let ok = fetch_body(&pool, &mut session, "acct-1", "folder-1", 999_999, 1)
-        .await
-        .expect("不应当报错");
+    let ok = fetch_body(
+        &pool,
+        &mut session,
+        "acct-1",
+        "folder-1",
+        "INBOX",
+        999_999,
+        1,
+    )
+    .await
+    .expect("不应当报错");
     assert!(!ok);
 
     server.shutdown().await;
+}
+
+/// UID 是**邮箱作用域**的：拉正文前必须把会话切到那封邮件所在的文件夹。
+///
+/// 少了这一步，服务器会拿当前选中的邮箱去查那个 UID → 返回**空结果**，
+/// 于是「拉到了 0 封」看起来像「服务器上没有这封邮件」（实测 2026-10-26，
+/// 三家真实邮箱上只同步出 INBOX、正文一直拉不到）。
+#[tokio::test]
+async fn body_is_fetched_even_when_the_session_is_on_another_folder() {
+    // 假服务器上放两个文件夹，INBOX 有一封带正文的邮件。
+    let config = FakeServerConfig {
+        mailboxes: vec![
+            MailboxFixture::new("INBOX").with_message(
+                MessageFixture::new(1_792_658_701)
+                    .with_subject("有正文的一封")
+                    .with_body("正文一"),
+            ),
+            MailboxFixture::new("空文件夹"),
+        ],
+        ..FakeServerConfig::default()
+    };
+    let (server, imap, trust) = start(config).await;
+    let mut session = login(&imap, &trust).await;
+
+    let (pool, folder) = local_store().await;
+
+    // 先同步 INBOX（会话停在 INBOX 上）。
+    let report = pull_folder(&pool, &mut session, &folder, 0)
+        .await
+        .expect("同步应当成功");
+    assert_eq!(report.added, 1);
+
+    // 会话切到**另一个**文件夹。
+    session
+        .examine("空文件夹")
+        .await
+        .expect("应当能打开另一个文件夹");
+
+    // 现在拉 INBOX 里那封的正文——必须成功。
+    let ok = fetch_body(
+        &pool,
+        &mut session,
+        "acct-1",
+        "folder-1",
+        "INBOX",
+        1_792_658_701,
+        1,
+    )
+    .await
+    .expect("拉正文不应报错");
+    assert!(ok, "应当拉到正文");
+
+    let body = read_body(&pool, "acct-1", "folder-1", 1_792_658_701, 1)
+        .await
+        .expect("读正文不应报错")
+        .expect("正文应当已落库");
+    assert_eq!(body.text_plain.as_deref(), Some("正文一"));
+
+    drop(server);
 }

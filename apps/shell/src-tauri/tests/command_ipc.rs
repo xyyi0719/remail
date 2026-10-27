@@ -17,7 +17,7 @@ use tauri::test::{
 };
 use tauri::webview::InvokeRequest;
 use xremail_shell_lib::cmd;
-use xremail_shell_lib::service::AccountService;
+use xremail_shell_lib::service::{AccountService, MessageService, SyncService};
 use xremail_shell_lib::state::AppState;
 
 /// 造一个带内存库的应用与 webview。
@@ -36,7 +36,10 @@ fn app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
 
     let state = AppState::new(
         std::path::PathBuf::from("/tmp/xremail-test"),
-        AccountService::new(pool),
+        AccountService::new(pool.clone()),
+        MessageService::new(pool.clone()),
+        SyncService::new(pool.clone()),
+        pool,
     );
 
     let app = mock_builder()
@@ -45,6 +48,10 @@ fn app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
             cmd::list_accounts,
             cmd::create_account,
             cmd::delete_account,
+            cmd::sync_account,
+            cmd::list_folders,
+            cmd::list_messages,
+            cmd::open_message,
         ])
         .build(mock_context(noop_assets()))
         .expect("构建 mock 应用失败");
@@ -286,4 +293,72 @@ fn deleting_a_missing_account_reports_false() {
     let value: serde_json::Value = body.deserialize().expect("反序列化失败");
 
     assert_eq!(value, json!(false));
+}
+
+// ---------------------------------------------------------------- 邮件查询
+
+#[test]
+fn list_folders_returns_empty_array_before_any_sync() {
+    let (_app, webview) = app();
+
+    let body = get_ipc_response(
+        &webview,
+        request("list_folders", json!({ "accountId": "acct-1" })),
+    )
+    .expect("命令应当成功");
+    let value: serde_json::Value = body.deserialize().expect("反序列化失败");
+
+    assert_eq!(value, json!([]));
+}
+
+#[test]
+fn list_messages_returns_empty_array_for_unknown_folder() {
+    let (_app, webview) = app();
+
+    let body = get_ipc_response(
+        &webview,
+        request(
+            "list_messages",
+            json!({ "accountId": "acct-1", "folderId": "没有这个文件夹" }),
+        ),
+    )
+    .expect("命令应当成功");
+    let value: serde_json::Value = body.deserialize().expect("反序列化失败");
+
+    assert_eq!(value, json!([]));
+}
+
+#[test]
+fn open_message_returns_null_when_body_is_not_cached() {
+    // 本地没有正文时返回 null（前端据此按需去拉），
+    // **不是**报错——「还没拉」和「拉失败」是两回事。
+    let (_app, webview) = app();
+
+    let body = get_ipc_response(
+        &webview,
+        request(
+            "open_message",
+            json!({ "accountId": "acct-1", "folderId": "f-1", "uid": 1 }),
+        ),
+    )
+    .expect("命令应当成功");
+    let value: serde_json::Value = body.deserialize().expect("反序列化失败");
+
+    assert_eq!(value, json!(null));
+}
+
+#[test]
+fn sync_account_rejects_an_unknown_account() {
+    let (_app, webview) = app();
+
+    let err = get_ipc_response(
+        &webview,
+        request(
+            "sync_account",
+            json!({ "accountId": "不存在的账户", "credential": "x" }),
+        ),
+    )
+    .expect_err("账户不存在应当报错");
+
+    assert!(err.to_string().contains("不存在"), "实际错误是：{err}");
 }

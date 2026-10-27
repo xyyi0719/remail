@@ -6129,8 +6129,13 @@ name = "xremail-diagnostics"
 version = "0.1.0"
 dependencies = [
  "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "xremail-core",
  "xremail-message",
  "xremail-protocol-imap",
+ "xremail-store",
+ "xremail-sync",
 ]
 
 [[package]]
@@ -6181,7 +6186,9 @@ dependencies = [
  "tracing-subscriber",
  "xremail-api",
  "xremail-core",
+ "xremail-protocol-imap",
  "xremail-store",
+ "xremail-sync",
 ]
 
 [[package]]

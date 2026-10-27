@@ -1,0 +1,131 @@
+//! 同步编排：把一个账户的全部文件夹同步进本地。
+//!
+//! ## 流程
+//!
+//! 1. `LIST` 列出服务器上的文件夹（**安全命令层**，服务器拒绝会报错）；
+//! 2. 每个文件夹 upsert 一条本地记录（冲突键 `(account_id, remote_name)`，
+//!    **不覆盖**本地 `id`——`message` 的外键指着它）；
+//! 3. 逐个文件夹跑 [`crate::pull::pull_folder`]（差分 → epoch 判定 → 落库）。
+//!
+//! ## 凭据不落盘
+//!
+//! 授权码只作为**参数**传进来，用完即弃。
+//! 落盘需要平台钥匙串（P4）或主密码方案——那时 `account.secret_ref`
+//! 才是有意义的不透明引用。
+//!
+//! ## 只支持隐式 TLS
+//!
+//! 协议层只走隐式 TLS 且强制校验证书（见 SECURITY §2.2），
+//! 所以 `TlsMode::None` / `Startls` 的账户**直接报错**，
+//! 绝不静默降级成明文。
+
+use sqlx::SqlitePool;
+use xremail_core::model::{Account, Folder, TlsMode};
+use xremail_core::{AppError, AppResult};
+use xremail_protocol_imap::folders::list_folders;
+use xremail_protocol_imap::{ImapConfig, Session};
+use xremail_store::dao::folder as folder_dao;
+
+use crate::pull::{FolderSyncReport, pull_folder};
+
+/// 一轮账户同步的结果。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncSummary {
+    /// 同步的文件夹数。
+    pub folders: usize,
+    /// 新拉到多少封。
+    pub added: usize,
+    /// 服务器已删、清掉多少封。
+    pub removed: usize,
+    /// 逐个文件夹的详情。
+    pub reports: Vec<FolderSyncReport>,
+}
+
+/// 同步一个账户的全部文件夹。
+///
+/// `session` 必须是**已登录**的会话。
+pub async fn sync_account(
+    pool: &SqlitePool,
+    session: &mut Session,
+    account: &Account,
+    now_ms: i64,
+) -> AppResult<SyncSummary> {
+    // 只支持隐式 TLS：不静默降级。
+    if account.server.imap_tls != TlsMode::Implicit {
+        return Err(AppError::Unsupported(format!(
+            "账户 {} 的 IMAP 加密方式是 {:?}，目前只支持隐式 TLS（implicit）",
+            account.email, account.server.imap_tls
+        )));
+    }
+
+    // 1. 服务器上的文件夹。
+    let remote = list_folders(session)
+        .await
+        .map_err(|e| AppError::Protocol(format!("列文件夹失败: {e}")))?;
+
+    let mut summary = SyncSummary::default();
+
+    for item in remote {
+        // 2. 本地文件夹记录。
+        //
+        // 先看本地有没有同名文件夹——有就复用它的 `id`（`message` 的外键指着它，
+        // 换 id 会让已缓存的邮件失去归属）。
+        //
+        // 比对用**线路上的原样**（modified UTF-7）。
+        let existing = folder_dao::list_folders(pool, &account.id)
+            .await?
+            .into_iter()
+            .find(|folder| folder.remote_name == item.raw_name);
+
+        let folder = Folder {
+            id: existing
+                .as_ref()
+                .map(|folder| folder.id.clone())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            account_id: account.id.clone(),
+            remote_name: item.raw_name.clone(),
+            remote_id: None,
+            local_name: existing
+                .as_ref()
+                .and_then(|folder| folder.local_name.clone()),
+            delimiter: item.delimiter.clone(),
+            subscribed: existing.as_ref().map(|f| f.subscribed).unwrap_or(true),
+            selectable: true,
+            last_sync_at: existing.as_ref().and_then(|folder| folder.last_sync_at),
+            last_uid: existing.as_ref().and_then(|folder| folder.last_uid),
+            highest_modseq: existing.as_ref().and_then(|folder| folder.highest_modseq),
+            uidvalidity: existing.as_ref().and_then(|folder| folder.uidvalidity),
+        };
+        folder_dao::upsert_folder(pool, &folder).await?;
+
+        // 3. 拉取这个文件夹。
+        //
+        // 单个文件夹失败**不该**让整轮同步失败：邮箱里常有一个文件夹
+        // 是坏的（权限不足之类）。逐个记录，继续下一个。
+        match pull_folder(pool, session, &folder, now_ms).await {
+            Ok(report) => {
+                summary.folders += 1;
+                summary.added += report.added;
+                summary.removed += report.removed;
+                summary.reports.push(report);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    account = %account.email,
+                    folder = %item.name,
+                    %error,
+                    "文件夹同步失败，继续下一个"
+                );
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+/// 从账户配置构造 IMAP 连接参数。
+pub fn imap_config_for(account: &Account) -> ImapConfig {
+    let mut config = ImapConfig::imaps(&account.server.imap_host);
+    config.port = account.server.imap_port;
+    config
+}

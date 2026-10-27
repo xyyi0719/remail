@@ -233,3 +233,123 @@ body {
   background: color-mix(in srgb, #dc2626 12%, transparent);
   color: #b91c1c;
 }
+
+/* ---------------- 文件夹 / 邮件 / 正文 ---------------- */
+
+.folder-list,
+.message-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.folder-item,
+.message-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.folder-item:hover,
+.message-item:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.folder-item-active,
+.message-item-active {
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.folder-name {
+  font-weight: 600;
+}
+
+.folder-detail,
+.message-detail {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.message-subject {
+  overflow-wrap: anywhere;
+}
+
+.message-unread {
+  font-weight: 700;
+}
+
+.message-star {
+  color: #d9a300;
+  margin-right: 4px;
+}
+
+.message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+
+.account-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.account-sync {
+  padding: 4px 12px;
+}
+
+.sync-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px dashed color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 8px;
+}
+
+.account-email {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.sync-label {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.sync-input {
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  color: inherit;
+  font: inherit;
+}

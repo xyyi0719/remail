@@ -16,10 +16,13 @@ pub mod command;
 pub mod connection;
 pub mod credential;
 pub mod error;
+pub mod folders;
 pub mod probe;
 pub mod utf7;
 
-pub use command::{CommandOutcome, FetchedMessage, MailboxInfo, examine_checked, run_checked};
+pub use command::{
+    CommandOutcome, FetchedMessage, ListedMailbox, MailboxInfo, examine_checked, run_checked,
+};
 pub use connection::{
     ImapConfig, ImapStream, Session, TlsInfo, TlsTrust, connect_and_login, connect_and_login_with,
 };
@@ -27,6 +30,7 @@ pub use credential::{
     AccountCredential, CredentialError, CredentialStore, default_accounts_path, mask_user,
 };
 pub use error::ProtocolError;
+pub use folders::{RemoteFolder, list_folders};
 pub use probe::{
     ExtensionSupport, FolderSummary, MailboxSummary, ProbeConfig, ProbeReport, auth_mechanisms,
     capability_names, extension_support, probe,

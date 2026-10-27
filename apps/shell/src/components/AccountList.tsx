@@ -1,13 +1,23 @@
-import type { Account } from "../types";
+import type { Account, SyncResult } from "../types";
 import { PROVIDER_LABELS, SYNC_MODE_LABELS, TLS_LABELS } from "../types";
+import SyncPanel from "./SyncPanel";
 
 interface Props {
   accounts: Account[];
+  onSelect: (account: Account) => void;
   onDelete: (id: string) => void;
+  onSynced: (result: SyncResult) => void;
+  onError: (message: string) => void;
 }
 
 /** 账户列表。数据来自 SQLite，不是硬编码。 */
-function AccountList({ accounts, onDelete }: Props) {
+function AccountList({
+  accounts,
+  onSelect,
+  onDelete,
+  onSynced,
+  onError,
+}: Props) {
   if (accounts.length === 0) {
     return (
       <section className="panel">
@@ -24,7 +34,13 @@ function AccountList({ accounts, onDelete }: Props) {
         {accounts.map((account) => (
           <li key={account.id} className="account-item">
             <div className="account-main">
-              <span className="account-email">{account.email}</span>
+              <button
+                type="button"
+                className="account-email"
+                onClick={() => onSelect(account)}
+              >
+                {account.email}
+              </button>
               <span className="account-tag">
                 {PROVIDER_LABELS[account.provider] ?? account.provider}
               </span>
@@ -43,15 +59,22 @@ function AccountList({ accounts, onDelete }: Props) {
             </div>
             <div className="account-detail account-detail-muted">
               用户名 {account.username}
-              {account.secretRef === null && " · 凭据未接入"}
+              {account.secretRef === null && " · 凭据未落盘"}
             </div>
-            <button
-              type="button"
-              className="account-delete"
-              onClick={() => onDelete(account.id)}
-            >
-              删除
-            </button>
+            <div className="account-actions">
+              <SyncPanel
+                account={account}
+                onSynced={onSynced}
+                onError={onError}
+              />
+              <button
+                type="button"
+                className="account-delete"
+                onClick={() => onDelete(account.id)}
+              >
+                删除
+              </button>
+            </div>
           </li>
         ))}
       </ul>

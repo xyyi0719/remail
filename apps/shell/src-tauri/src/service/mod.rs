@@ -14,5 +14,9 @@
 //! [ARCHITECTURE §1.6](../../../../../docs/ARCHITECTURE.md)）。
 
 pub mod account;
+pub mod message;
+pub mod sync;
 
 pub use account::AccountService;
+pub use message::MessageService;
+pub use sync::SyncService;

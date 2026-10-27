@@ -39,6 +39,7 @@ pub mod intent;
 pub mod net;
 pub mod pull;
 pub mod push;
+pub mod sync;
 
 pub use body::{fetch_body, read_body};
 pub use diff::{UidDiff, UidSet, diff_uids};
@@ -49,3 +50,4 @@ pub use intent::{
 };
 pub use pull::{FolderSyncReport, flags_from_imap, pull_folder};
 pub use push::{FlagPushReport, push_flags};
+pub use sync::{SyncSummary, sync_account};

@@ -10,20 +10,22 @@
 
 ## 当前状态
 
-> **v0.1.0 · P0 已出关 / P1 只读链路完成**（2026-10-23）
+> **v0.1.0 · P0 已出关 / P1 读信链路已接进应用**（2026-10-26）
 >
 > 架构持续复核。当前设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-> 2026-10-23 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（387 个用例）/ `npm typecheck` / `npm build` 均通过。
+> 2026-10-26 验证：`cargo fmt` / `cargo clippy -D warnings` / `cargo test`（397 个用例）/ `npm typecheck` / `npm build` 均通过。
 >
 > **已落地**：存储层（`xremail-store`）、密文封装（`xremail-crypto`）、L2 契约（`xremail-api`）、
 > 同步引擎（`xremail-sync`）、IMAP 协议层（`xremail-protocol-imap`）、
 > 内容解析（`xremail-message`）、假服务器（`xremail-testkit`）。
 > 同步引擎的**拉取**与**回写**两条链路已打通（头随拉取、正文按需、标记回读确认）。
 >
-> **三家真实邮箱均已只读实测**（163 / QQ / 沃），协议事实见 [docs/PROTOCOLS.md](docs/PROTOCOLS.md)。
+> **UI 里能看到真实邮箱的邮件**（2026-10-26）：三家真实账号各跑通一次——
+> 163（6 文件夹 / 4 封 / utf-8）、QQ（6 文件夹 / 71 封 / gb2312）、沃（6 文件夹 / 6 封 / gbk），
+> 正文解码零错误。协议事实见 [docs/PROTOCOLS.md](docs/PROTOCOLS.md)。
 >
-> **尚未接入应用**：UI 里只有账户列表，看不到邮件；发信（SMTP）未开始。
-> 另有 13 个提交**从未推送到 GitHub**，CI 未在这批代码上跑过。
+> **还缺**：凭据不落盘（每次同步要重填授权码）、无调度器（要手动点同步）、
+> 发信（SMTP）未开始、HTML **不渲染**（只显示源码，HTML 清洗器属 P2）。
 > 想看进度：[docs/ROADMAP.md](docs/ROADMAP.md)
 
 | 状态 |

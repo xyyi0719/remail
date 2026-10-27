@@ -58,6 +58,16 @@
 | 编码 | 全部按 UTF-8 存储；入站需处理 GBK/GB18030/Big5 |
 | 时间 | 统一 epoch 毫秒（UTC） |
 
+### 三个容易踩的通用陷阱（2026-10-26 真实邮箱实测）
+
+| 陷阱 | 症状 | 正确做法 |
+|---|---|---|
+| **EXAMINE 只认线路原名** | `LIST` 返回的名字是 modified UTF-7（`&XfJT0ZAB-`）；解码成「草稿箱」再去 `EXAMINE`，服务器回 `NO EXAMINE Folder not exist` | 库里存**线路原样**（`folder.remote_name`），显示时再解码 |
+| **UID 是邮箱作用域的** | 会话停在另一个文件夹时，`UID FETCH <uid>` 返回**空结果**（不是报错）；「拉到了 0 封」看起来像「服务器上没有这封邮件」 | 取数据前先 `EXAMINE` / `SELECT` 对应文件夹 |
+| **LIST / UID FETCH / UID STORE / UID SEARCH 会吐掉带 tag 的 NO** | 服务器拒绝了，客户端却拿到 `Ok(空结果)` | 一律走安全命令层 `run_checked`（自己读响应、自己判 OK/NO/BAD） |
+
+前两条不是某个服务商的怪癖，是 IMAP 本身的规定；它们在 163 / QQ / 沃 上都成立。
+
 ---
 
 ## 163 邮箱（@163.com）

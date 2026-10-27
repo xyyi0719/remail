@@ -42,6 +42,10 @@ use xremail_store::dao::sync::{FolderSyncWrite, commit_folder_sync};
 pub struct FolderSyncReport {
     /// 文件夹 ID。
     pub folder_id: String,
+    /// 文件夹名在**线路上的原样**（modified UTF-7）。
+    ///
+    /// 后续要对这个文件夹发命令时用它（服务器只认自己给出的那个形式）。
+    pub remote_name: String,
     /// 服务器当前的 epoch。
     pub uidvalidity: i64,
     /// 是否**全量拉取**（首次同步或 epoch 切换）。
@@ -185,6 +189,7 @@ pub async fn pull_folder(
 
     Ok(FolderSyncReport {
         folder_id: folder.id.clone(),
+        remote_name: folder.remote_name.clone(),
         uidvalidity: observed,
         full_fetch: transition.requires_full_fetch(),
         epoch_changed,
