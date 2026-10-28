@@ -1,4 +1,5 @@
-import type { Account, SyncResult } from "../types";
+import { invoke } from "@tauri-apps/api/core";
+import type { Account, Notice, SyncResult } from "../types";
 import { PROVIDER_LABELS, SYNC_MODE_LABELS, TLS_LABELS } from "../types";
 import SyncPanel from "./SyncPanel";
 
@@ -8,6 +9,9 @@ interface Props {
   onDelete: (id: string) => void;
   onSynced: (result: SyncResult) => void;
   onError: (message: string) => void;
+  onNotice: (notice: Notice) => void;
+  /** 账户信息变了（凭据存进 / 删掉）之后重新拉一遍账户列表。 */
+  onChanged: () => void;
 }
 
 /** 账户列表。数据来自 SQLite，不是硬编码。 */
@@ -17,6 +21,8 @@ function AccountList({
   onDelete,
   onSynced,
   onError,
+  onNotice,
+  onChanged,
 }: Props) {
   if (accounts.length === 0) {
     return (
@@ -26,6 +32,28 @@ function AccountList({
       </section>
     );
   }
+
+  /**
+   * 从系统凭据库里删掉这个账户的授权码。
+   *
+   * 删完要重新拉账户列表：`secretRef` 变了，「凭据已保存到系统」
+   * 得变成「凭据未落盘」。
+   */
+  const forget = async (account: Account) => {
+    try {
+      const removed = await invoke<boolean>("forget_credential", {
+        accountId: account.id,
+      });
+      onNotice(
+        removed
+          ? { kind: "ok", text: "已从系统凭据库移除该授权码" }
+          : { kind: "info", text: "系统凭据库里本来就没有这个授权码" },
+      );
+      onChanged();
+    } catch (e) {
+      onNotice({ kind: "error", text: `忘记凭据失败：${String(e)}` });
+    }
+  };
 
   return (
     <section className="panel">
@@ -59,14 +87,27 @@ function AccountList({
             </div>
             <div className="account-detail account-detail-muted">
               用户名 {account.username}
-              {account.secretRef === null && " · 凭据未落盘"}
+              {account.secretRef === null
+                ? " · 凭据未落盘"
+                : " · 凭据已保存到系统"}
             </div>
             <div className="account-actions">
               <SyncPanel
                 account={account}
                 onSynced={onSynced}
                 onError={onError}
+                onNotice={onNotice}
+                onChanged={onChanged}
               />
+              {account.secretRef !== null && (
+                <button
+                  type="button"
+                  className="account-forget"
+                  onClick={() => void forget(account)}
+                >
+                  忘记凭据
+                </button>
+              )}
               <button
                 type="button"
                 className="account-delete"

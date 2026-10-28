@@ -149,6 +149,34 @@ pub async fn list_pending_operations(
     rows.iter().map(row_to_operation).collect()
 }
 
+/// 按 id 取一条操作。
+///
+/// 不存在时返回 `Ok(None)`——「没有这条操作」不是错误。
+///
+/// 用途：回写一条操作后，调用方要能读回**这一条**的状态
+/// （`push_flags` 只给汇总报告，见 `xremail_sync::push_flags`）。
+pub async fn get_operation(pool: &SqlitePool, id: &str) -> AppResult<Option<MailOperation>> {
+    let rows = sqlx::query_as!(
+        OperationRow,
+        r#"
+        SELECT id, account_id, folder_id, uid, uidvalidity,
+               kind, intent, state, seq, base_version,
+               attempts, error_kind, error_message, created_at, updated_at
+        FROM mail_operation
+        WHERE id = ?
+        "#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "get_operation"))?;
+
+    match rows {
+        Some(row) => Ok(Some(row_to_operation(&row)?)),
+        None => Ok(None),
+    }
+}
+
 /// 列出某个账户里**全部**未完结的操作。
 ///
 /// epoch 切换时用它找出绑定旧 epoch 的那些（要隔离的）。

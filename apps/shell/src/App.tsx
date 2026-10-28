@@ -9,10 +9,14 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Account,
   AppInfo,
+  FlagIntentResult,
+  FlagTarget,
   Folder,
   Message,
+  Notice,
   SyncResult,
 } from "./types";
+import { describeFlagIntent, isStarred, isUnread } from "./types";
 import "./App.css";
 
 /**
@@ -31,6 +35,9 @@ function App() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 「命令成功了，但结果有区别」的反馈走这条通道，跟 `error` 分开：
+  // 成功的操作不能显示成错误。
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   // 当前浏览的账户 / 文件夹 / 邮件。
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -136,6 +143,68 @@ function App() {
 
   const handleError = useCallback((message: string) => setError(message), []);
 
+  const handleNotice = useCallback((n: Notice) => setNotice(n), []);
+
+  /**
+   * 提交一个标记意图（已读 / 星标），然后重新拉一次列表。
+   *
+   * 为什么不直接在前端把位改了：后端维护着一份「未提交意图」的账本，
+   * `list_messages` 会把它叠在服务器快照上返回。重新拉一次拿到的是
+   * 后端账本的真实状态，前端不用自己猜，也不用维护乐观更新。
+   */
+  const handleSetFlag = useCallback(
+    async (target: Message, flag: FlagTarget, value: boolean) => {
+      try {
+        const result = await invoke<FlagIntentResult>("set_message_flag", {
+          accountId: target.accountId,
+          folderId: target.folderId,
+          uid: target.uid,
+          flag,
+          value,
+        });
+        // 五种状态有五种说法，成功 / 排队 / 不确定各说各的。
+        setNotice(describeFlagIntent(result));
+      } catch (e) {
+        setError(String(e));
+        return;
+      }
+
+      try {
+        const next = await invoke<Message[]>("list_messages", {
+          accountId: target.accountId,
+          folderId: target.folderId,
+        });
+        // 提交期间用户可能已经换文件夹了——那这份列表属于旧文件夹，
+        // 写进去会把新文件夹的邮件冲掉。
+        if (accountId !== target.accountId || folderId !== target.folderId) {
+          return;
+        }
+        setMessages(next);
+        // 顺手把打开着的那封也换成最新的：否则正文面板里的
+        // 「标记为已读 / 未读」按钮还按旧位显示。
+        setMessage((prev) => {
+          if (!prev || prev.uid !== target.uid) {
+            return prev;
+          }
+          return next.find((m) => m.uid === target.uid) ?? prev;
+        });
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [accountId, folderId],
+  );
+
+  const handleToggleStar = useCallback(
+    (target: Message) => handleSetFlag(target, "flagged", !isStarred(target)),
+    [handleSetFlag],
+  );
+
+  const handleToggleSeen = useCallback(
+    (target: Message) => handleSetFlag(target, "seen", !isUnread(target)),
+    [handleSetFlag],
+  );
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -157,6 +226,20 @@ function App() {
 
       {error && <p className="app-error">操作失败：{error}</p>}
 
+      {notice && (
+        <div className={`app-notice app-notice-${notice.kind}`} role="status">
+          <span>{notice.text}</span>
+          <button
+            type="button"
+            className="app-notice-close"
+            aria-label="关闭提示"
+            onClick={() => setNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <AccountForm />
 
       {accounts === null ? (
@@ -169,6 +252,8 @@ function App() {
             onDelete={handleDelete}
             onSynced={handleSynced}
             onError={handleError}
+            onNotice={handleNotice}
+            onChanged={refresh}
           />
 
           {accountId && (
@@ -185,6 +270,7 @@ function App() {
                     messages={messages}
                     selectedUid={message?.uid ?? null}
                     onSelect={setMessage}
+                    onToggleStar={handleToggleStar}
                   />
 
                   {message && (
@@ -192,6 +278,7 @@ function App() {
                       accountId={accountId}
                       folderId={folderId}
                       message={message}
+                      onToggleSeen={handleToggleSeen}
                       onError={handleError}
                     />
                   )}

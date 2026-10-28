@@ -75,6 +75,67 @@ body {
   color: #15803d;
 }
 
+/* -------------------------------------------------- 提示条（成功 / 中间态） */
+
+/*
+ * 提示条和 `.app-error` 分开：错误是「命令炸了」，提示是
+ * 「命令回来了，但结果有区别」（已生效 / 已排队 / 不知道有没有生效）。
+ *
+ * 配色用 `color-mix` 掺一点 currentColor：浅色主题下自动变深、
+ * 深色主题下自动变亮，两种主题都读得清。
+ */
+.app-notice {
+  --notice-accent: #2563eb;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--notice-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--notice-accent) 12%, transparent);
+  color: var(--notice-accent);
+  color: color-mix(in srgb, var(--notice-accent) 70%, currentColor);
+}
+
+.app-notice-ok {
+  --notice-accent: #16a34a;
+}
+
+.app-notice-info {
+  --notice-accent: #2563eb;
+}
+
+.app-notice-warn {
+  --notice-accent: #d97706;
+}
+
+/* 「不知道服务器执行了没」跟「服务器明确没接受」不是一回事，配色也分开。 */
+.app-notice-unknown {
+  --notice-accent: #7c3aed;
+}
+
+.app-notice-error {
+  --notice-accent: #dc2626;
+}
+
+.app-notice-close {
+  flex: 0 0 auto;
+  padding: 0 0.35rem;
+  font: inherit;
+  line-height: 1;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.app-notice-close:hover {
+  opacity: 1;
+}
+
 .app-loading {
   opacity: 0.6;
 }
@@ -234,6 +295,23 @@ body {
   color: #b91c1c;
 }
 
+/* 「忘记凭据」：从系统钥匙串里删掉授权码。 */
+.account-forget {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.account-forget:hover {
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+  color: color-mix(in srgb, #dc2626 70%, currentColor);
+}
+
 /* ---------------- 文件夹 / 邮件 / 正文 ---------------- */
 
 .folder-list,
@@ -296,6 +374,77 @@ body {
   margin-right: 4px;
 }
 
+/* 一行邮件 = 主体 + 行尾的星标按钮。 */
+.message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.message-row .message-item {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+/* 星标按钮做得很小，别把列表布局挤坏。 */
+.message-star-toggle {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: color-mix(in srgb, currentColor 45%, transparent);
+  cursor: pointer;
+}
+
+.message-star-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: currentColor;
+}
+
+.message-star-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.message-star-toggle-on {
+  color: color-mix(in srgb, #d9a300 80%, currentColor);
+}
+
+.message-star-toggle .message-star {
+  margin-right: 0;
+  color: color-mix(in srgb, #d9a300 80%, currentColor);
+}
+
+/* 正文面板里的「标记为已读 / 未读」。 */
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.message-flag-button {
+  padding: 0.3rem 0.8rem;
+  font: inherit;
+  font-size: 0.875rem;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.message-flag-button:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
 .message-body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -316,6 +465,35 @@ body {
 
 .account-sync {
   padding: 4px 12px;
+}
+
+.sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 「保存到系统凭据库」：把授权码交给操作系统的钥匙串。 */
+.account-save-credential {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.account-save-credential:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sync-hint {
+  font-size: 0.8125rem;
+  opacity: 0.7;
 }
 
 .sync-panel {

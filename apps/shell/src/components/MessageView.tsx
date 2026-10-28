@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Message, MessageBody } from "../types";
+import { isUnread } from "../types";
 
 interface Props {
   accountId: string;
   folderId: string;
   message: Message;
+  /** 切换已读 / 未读。 */
+  onToggleSeen: (message: Message) => void | Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -20,8 +23,20 @@ interface Props {
  *
  * 真实情况：国内服务商的邮件**大多是 HTML-only**（没有 text/plain），
  * 实测 163 / QQ / 沃三家的抽样邮件纯文本都是 0 字。所以这条路径不是边角情况。
+ *
+ * ## 为什么打开邮件不自动标记已读
+ *
+ * 用户可能只是瞄一眼、扫一眼列表，结果服务器上的已读位被改了——
+ * 那是**改变了他的邮箱状态**，而他并没有要求过。所以这里只给一个
+ * 显式的「标记为已读 / 标记为未读」按钮，改不改由用户决定。
  */
-function MessageView({ accountId, folderId, message, onError }: Props) {
+function MessageView({
+  accountId,
+  folderId,
+  message,
+  onToggleSeen,
+  onError,
+}: Props) {
   const [body, setBody] = useState<MessageBody | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -66,6 +81,19 @@ function MessageView({ accountId, folderId, message, onError }: Props) {
         {message.from.join(", ") || "（未知发件人）"}
         {message.to.length > 0 && ` → ${message.to.join(", ")}`}
       </p>
+
+      <div className="message-actions">
+        <button
+          type="button"
+          className="message-flag-button"
+          onClick={() => void onToggleSeen(message)}
+        >
+          {isUnread(message) ? "标记为已读" : "标记为未读"}
+        </button>
+        <span className="message-detail">
+          当前：{isUnread(message) ? "未读" : "已读"}
+        </span>
+      </div>
 
       {loading && <p className="panel-empty">正在取正文…</p>}
 

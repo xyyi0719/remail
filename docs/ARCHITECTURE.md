@@ -177,8 +177,21 @@ Message-ID、稳定操作 ID 有助于排查，但不能保证 SMTP 去重。明
 列未完结操作、更新状态。**目前只实现了 flag 类操作**——
 move / delete / append / SMTP 尚未定义（等假服务器补齐 COPY / MOVE / APPEND）。
 
-「UI 可立即显示带 pending 标识的本地结果」这条**尚未落地**：
-前端现在只显示账户，没有邮件列表。
+**实现落点（2026-10-26）**：flag 类操作**已真正回写服务器**。
+链路：`MessageService::set_flag_intent` 先落一条 `mail_operation`（`queued`）→
+`cmd::set_message_flag` 用凭据连服务器 → `xremail_sync::push_flags` 以**可写**方式
+（`SELECT`，不是 `EXAMINE`）提交 `UID STORE` → **回读 `FLAGS` 逐位确认** →
+按 §2.2 把结果分成 `succeeded` / `retryable` / `uncertain` → `cmd` **按操作 id 读回这一条**
+的状态给前端（`FlagIntentResult`：`queued` / `applied` / `state` / `message`）。
+
+「UI 可立即显示带 pending 标识的本地结果」这条**已落地**：
+`MessageService::list_messages` 会把该文件夹里**未完结**的意图叠加到本地邮件上
+（`overlay_pending_intents`，只叠加 `uidvalidity` 与当前 epoch 一致的那些），
+所以点「已读」后列表立刻变，而服务器确认与否是**另一件事**——
+前端拿到的是 `applied`（服务器回读确认过）而不是「UI 显示了」。
+
+epoch 绑定：意图落库时记下当时的 `uidvalidity`。提交前发现 epoch 变了 → 这条意图
+**作废**（`failed` / `epoch_changed`），因为旧 UID 在新 epoch 下指向另一封信。
 
 ## 6. flag 并发语义
 
@@ -242,6 +255,14 @@ P6 前重新审查身份认证、密钥恢复、轮换、回滚/重放防护与�
 
 Windows 先打通完整链路，Android 保留目标并尽早做小型生命周期 PoC。普通轮询不保证 Doze 下准时执行；前台服务也不是永久保活承诺。
 Linux/macOS/iOS 不属于当前验收平台，不因 Tauri 支持就视为产品可用。
+
+**平台钥匙串（2026-10-26 已实现 Windows 侧）**：`xremail_api::SecretStore` 的 Windows 适配
+在 `apps/shell/src-tauri/src/secrets/windows_store.rs`，条目名 `xremail:account:<account_id>`
+（通用凭据，`CRED_PERSIST_LOCAL_MACHINE`）。非 Windows 平台是 `secrets/unsupported.rs` 的**桩**：
+它**不**把凭据落到任何地方（`get` 恒为 `None`），平台不支持时**如实报错**，
+**不**降级成「存内存」或「存文件」——那样用户会以为已经保存了。
+`CredentialService`（`service/credential.rs`）只认 `account.secret_ref`：
+没有引用就**不去打扰钥匙串**；`forget_credential` 会同时删钥匙串条目并把 `secret_ref` 清成 `None`。
 
 错误按可恢复原因分类：传输临时失败退避；认证需用户动作；磁盘满/迁移失败不能当普通 Storage 错误无限重试；协议错误不原样输出可能含凭据/正文的响应。
 事件枚举以 `xremail-core/src/event.rs` 为准，flag 更新使用 MessageUpserted，当前没有 FlagsChanged。

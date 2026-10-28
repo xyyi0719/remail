@@ -193,3 +193,87 @@ export function isUnread(message: Message): boolean {
 export function isStarred(message: Message): boolean {
   return (message.flags & FLAG_FLAGGED) !== 0;
 }
+
+/**
+ * 标记位的目标（对应 `set_message_flag` 的 `flag` 参数）。
+ *
+ * 只暴露 IMAP 里真正有交互入口的两个位：`\Seen`（已读）与 `\Flagged`（星标）。
+ */
+export type FlagTarget = "seen" | "flagged";
+
+/**
+ * 标记意图的结果状态（对应 Rust 侧 `FlagIntentResult::state`）。
+ *
+ * 这五种状态**含义不同**，界面上必须分开说：
+ *
+ * - `succeeded`：服务器回读确认了，确实生效；
+ * - `queued`：意图写进本地账本了，等下次同步提交（还没到服务器）；
+ * - `retryable`：服务器**明确**没接受，可以重试；
+ * - `uncertain`：连接断了，**不知道**服务器执行了没（已记账，不会重复执行）；
+ * - `failed`：彻底失败。
+ *
+ * 把后三种揉成一句「操作失败」是错的：用户分不清「肯定没生效」
+ * 和「不知道有没有生效」——前者重试没问题，后者重试可能重复执行。
+ */
+export type FlagIntentState =
+  | "queued"
+  | "succeeded"
+  | "retryable"
+  | "failed"
+  | "uncertain";
+
+/** 标记意图的结果（对应 Rust 侧 `FlagIntentResult`，camelCase 序列化）。 */
+export interface FlagIntentResult {
+  /** 意图已落库（本地排队中）。 */
+  queued: boolean;
+  /** 服务器已回读确认、确实生效了。 */
+  applied: boolean;
+  /** 意图现在到哪一步了。 */
+  state: FlagIntentState;
+  /** 给用户看的中文说明（可能是 null）。 */
+  message: string | null;
+}
+
+/** 界面提示的严重级别（决定配色）。 */
+export type NoticeKind = "ok" | "info" | "warn" | "unknown" | "error";
+
+/**
+ * 一条界面提示。
+ *
+ * 和 `App` 里的 `error` 状态分开：error 是「命令炸了」，
+ * notice 是「命令成功了，但结果有区别」——成功的操作不该显示成错误。
+ */
+export interface Notice {
+  kind: NoticeKind;
+  text: string;
+}
+
+/**
+ * 把标记意图的结果翻译成一句给用户看的话。
+ *
+ * 为什么每种状态都单独说一句：见 `FlagIntentState` 的说明——
+ * 「没生效」和「不知道有没有生效」必须让用户分得清。
+ */
+export function describeFlagIntent(result: FlagIntentResult): Notice {
+  switch (result.state) {
+    case "succeeded":
+      return { kind: "ok", text: "已生效" };
+    case "queued":
+      return { kind: "info", text: "已排队，等下次同步提交" };
+    case "retryable":
+      return { kind: "warn", text: "服务器没接受，稍后重试" };
+    case "uncertain":
+      return {
+        kind: "unknown",
+        text: "连接中断，不知道服务器执行了没（已记账，不会重复执行）",
+      };
+    case "failed":
+      return {
+        kind: "error",
+        text: result.message ? `失败了：${result.message}` : "失败了",
+      };
+    default:
+      // 后端加了新状态而前端没跟上：别静默吞掉。
+      return { kind: "error", text: "后端返回了不认识的状态" };
+  }
+}

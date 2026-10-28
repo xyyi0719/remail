@@ -34,6 +34,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# 实现 xremail_api::SecretStore 需要 async_trait 宏（契约用它定义）。
+async-trait = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+# Windows 凭据管理器适配（见 src/secrets/）。
+# 只在 Windows 上生效，其它平台用 src/secrets/unsupported.rs 的桩。
+windows = { workspace = true }
 
 [dev-dependencies]
 # 临时目录用于测试库文件。

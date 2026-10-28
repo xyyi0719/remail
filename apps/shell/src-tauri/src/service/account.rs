@@ -9,6 +9,8 @@ use xremail_core::AppResult;
 use xremail_core::model::Account;
 use xremail_store::dao::account as account_dao;
 
+use super::current_time_ms;
+
 /// 账户服务。
 #[derive(Debug, Clone)]
 pub struct AccountService {
@@ -52,14 +54,4 @@ impl AccountService {
     pub async fn delete(&self, id: &str) -> AppResult<bool> {
         account_dao::delete_account(&self.pool, id).await
     }
-}
-
-/// 当前时间（epoch 毫秒）。
-fn current_time_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }

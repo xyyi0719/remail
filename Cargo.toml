@@ -49,6 +49,17 @@ encoding_rs = "0.8"
 base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net"] }
 tracing = "0.1"
+
+# Windows 凭据管理器（平台钥匙串适配）。
+# 用的就是 Tauri 已经引入的 windows 同一个版本，不额外拉新包。
+# - Win32_Security_Credentials：CredWriteW / CredReadW / CredDeleteW。
+# - Win32_Foundation：HRESULT / WIN32_ERROR。
+# - Win32_Security：CREDENTIAL 相关的类型与常量。
+windows = { version = "0.62", features = [
+    "Win32_Security_Credentials",
+    "Win32_Foundation",
+    "Win32_Security",
+] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # SQLite 访问层。特性说明：

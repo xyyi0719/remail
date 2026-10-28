@@ -15,6 +15,7 @@
 //! 静默降级会让人以为数据还在，实际却是另一份（ARCHITECTURE §9）。
 
 pub mod cmd;
+pub mod secrets;
 pub mod service;
 pub mod state;
 
@@ -65,6 +66,9 @@ pub fn run() {
             cmd::list_folders,
             cmd::list_messages,
             cmd::open_message,
+            cmd::save_credential,
+            cmd::forget_credential,
+            cmd::set_message_flag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Xremail application");

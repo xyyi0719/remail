@@ -10,12 +10,14 @@
 //! 参考 Tauri 官方的 `tauri::test` 用法。
 
 use serde_json::json;
+use tauri::Manager;
 use tauri::WebviewWindowBuilder;
 use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{
     INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
 };
 use tauri::webview::InvokeRequest;
+use xremail_core::model::{Folder, Message, MessageFlags};
 use xremail_shell_lib::cmd;
 use xremail_shell_lib::service::{AccountService, MessageService, SyncService};
 use xremail_shell_lib::state::AppState;
@@ -52,6 +54,9 @@ fn app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
             cmd::list_folders,
             cmd::list_messages,
             cmd::open_message,
+            cmd::save_credential,
+            cmd::forget_credential,
+            cmd::set_message_flag,
         ])
         .build(mock_context(noop_assets()))
         .expect("构建 mock 应用失败");
@@ -361,4 +366,212 @@ fn sync_account_rejects_an_unknown_account() {
     .expect_err("账户不存在应当报错");
 
     assert!(err.to_string().contains("不存在"), "实际错误是：{err}");
+}
+
+// ---------------------------------------------------------------- 凭据与标记
+
+/// 给某个账户塞一个**已同步过**的文件夹与一封邮件（供标记命令用）。
+///
+/// 文件夹必须带 `uidvalidity`（epoch）：没有 epoch 就不知道该把标记意图
+/// 绑到哪个 epoch 上，命令会直接报错。
+fn seed_mailbox(app: &tauri::App<MockRuntime>, account_id: &str) {
+    let pool = app.state::<AppState>().pool().clone();
+    tauri::async_runtime::block_on(async move {
+        xremail_store::dao::folder::upsert_folder(
+            &pool,
+            &Folder {
+                id: "folder-1".to_string(),
+                account_id: account_id.to_string(),
+                remote_name: "INBOX".to_string(),
+                remote_id: None,
+                local_name: Some("收件箱".to_string()),
+                delimiter: Some("/".to_string()),
+                subscribed: true,
+                selectable: true,
+                last_sync_at: None,
+                last_uid: None,
+                highest_modseq: None,
+                uidvalidity: Some(42),
+            },
+        )
+        .await
+        .expect("写入文件夹失败");
+
+        xremail_store::dao::message::upsert_message(
+            &pool,
+            &Message {
+                id: "message-1".to_string(),
+                account_id: account_id.to_string(),
+                folder_id: "folder-1".to_string(),
+                uid: 7,
+                uidvalidity: 42,
+                message_id: Some("<abc@163.com>".to_string()),
+                subject: Some("你好".to_string()),
+                snippet: None,
+                from: Vec::new(),
+                to: Vec::new(),
+                cc: Vec::new(),
+                bcc: Vec::new(),
+                date_sent: None,
+                internal_date: None,
+                flags: MessageFlags::empty(),
+                size: None,
+                has_attachment: false,
+            },
+        )
+        .await
+        .expect("写入邮件失败");
+    });
+}
+
+/// 建一个账户并返回它的 id。
+fn create_account(
+    app: &tauri::App<MockRuntime>,
+    webview: &tauri::WebviewWindow<MockRuntime>,
+) -> String {
+    let body = get_ipc_response(
+        webview,
+        request(
+            "create_account",
+            json!({ "request": valid_body("user@163.com") }),
+        ),
+    )
+    .expect("创建应当成功");
+    let value: serde_json::Value = body.deserialize().expect("反序列化失败");
+    let id = value["id"].as_str().expect("应有 id").to_string();
+    let _ = app;
+    id
+}
+
+#[test]
+fn save_credential_rejects_an_unknown_account() {
+    let (_app, webview) = app();
+
+    let err = get_ipc_response(
+        &webview,
+        request(
+            "save_credential",
+            json!({ "accountId": "不存在的账户", "credential": "secret" }),
+        ),
+    )
+    .expect_err("账户不存在应当报错");
+
+    assert!(err.to_string().contains("不存在"), "实际错误是：{err}");
+}
+
+#[test]
+fn forget_credential_reports_false_for_an_unknown_account() {
+    let (_app, webview) = app();
+
+    let body = get_ipc_response(
+        &webview,
+        request("forget_credential", json!({ "accountId": "不存在的账户" })),
+    )
+    .expect("命令应当成功");
+    let value: serde_json::Value = body.deserialize().expect("反序列化失败");
+
+    assert_eq!(value, json!(false));
+}
+
+#[test]
+fn sync_account_without_a_credential_asks_the_user_to_save_one_first() {
+    let (app, webview) = app();
+    let account_id = create_account(&app, &webview);
+
+    // 不传 `credential`：应当去钥匙串取，取不到就明确说「还没保存授权码」。
+    let err = get_ipc_response(
+        &webview,
+        request("sync_account", json!({ "accountId": account_id })),
+    )
+    .expect_err("没有授权码应当报错");
+
+    assert!(err.to_string().contains("授权码"), "实际错误是：{err}");
+}
+
+#[test]
+fn set_message_flag_rejects_an_unknown_flag() {
+    let (_app, webview) = app();
+
+    let err = get_ipc_response(
+        &webview,
+        request(
+            "set_message_flag",
+            json!({
+                "accountId": "acct-1",
+                "folderId": "folder-1",
+                "uid": 7,
+                "flag": "deleted",
+                "value": true,
+            }),
+        ),
+    )
+    .expect_err("不支持的标记应当报错");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("flagged") && message.contains("seen"),
+        "错误信息应当说清能填什么，实际是：{message}"
+    );
+}
+
+#[test]
+fn set_message_flag_uses_camel_case_argument_names() {
+    let (_app, webview) = app();
+
+    // camelCase 的参数名能绑定上——绑定失败会是「缺少参数」那类报错，
+    // 而这里拿到的是**业务**错误（文件夹不存在），说明参数已经进去了。
+    let err = get_ipc_response(
+        &webview,
+        request(
+            "set_message_flag",
+            json!({
+                "accountId": "acct-1",
+                "folderId": "folder-1",
+                "uid": 7,
+                "flag": "seen",
+                "value": true,
+            }),
+        ),
+    )
+    .expect_err("文件夹不存在应当报错");
+
+    assert!(err.to_string().contains("文件夹"), "实际错误是：{err}");
+}
+
+#[test]
+fn set_message_flag_queues_the_intent_when_no_credential_is_available() {
+    let (app, webview) = app();
+    let account_id = create_account(&app, &webview);
+    seed_mailbox(&app, &account_id);
+
+    let body = get_ipc_response(
+        &webview,
+        request(
+            "set_message_flag",
+            json!({
+                "accountId": account_id,
+                "folderId": "folder-1",
+                "uid": 7,
+                "flag": "flagged",
+                "value": true,
+            }),
+        ),
+    )
+    .expect("命令应当成功");
+    let value: serde_json::Value = body.deserialize().expect("反序列化失败");
+
+    // 拿不到凭据 → 只落库不提交。
+    assert_eq!(value["queued"], json!(true));
+    assert_eq!(value["applied"], json!(false));
+    assert_eq!(value["state"], json!("queued"));
+    // 四个字段都在（线格式：camelCase）。
+    for field in ["queued", "applied", "state", "message"] {
+        assert!(value.get(field).is_some(), "缺少字段 {field}");
+    }
+    // `message` 是给用户看的中文说明。
+    let message = value["message"].as_str().expect("message 应当是字符串");
+    assert!(
+        message.contains("授权码"),
+        "说明应当告诉用户去保存授权码，实际是：{message}"
+    );
 }

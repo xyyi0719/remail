@@ -37,6 +37,21 @@
 
 数据库里只有 `account.secret_ref`（一个不透明指针），**永远不是凭据本身**。
 
+**实现状态（2026-10-26）**：Windows 侧已落地——`apps/shell/src-tauri/src/secrets/windows_store.rs`
+走 Windows 凭据管理器（`CredWriteW` / `CredReadW` / `CredDeleteW`），条目名
+`xremail:account:<account_id>`，通用凭据类型，持久化范围 `CRED_PERSIST_LOCAL_MACHINE`。
+要点：
+
+- **不静默降级**：平台没有钥匙串适配（Android / Linux / macOS 现在是
+  `secrets/unsupported.rs` 的桩）时，保存**如实报错**，绝不落到明文文件或「只存内存」。
+  桩的 `get` 恒为 `None`。
+- **数据库里只有引用**：`account.secret_ref` 存的是上面那个条目名，不是授权码本身。
+- **只按引用取用**：`CredentialService::resolve_credential` 只看 `account.secret_ref`，
+  没有引用就**不去打扰钥匙串**；删账户/删凭据会同时清掉钥匙串条目与引用。
+- **不进日志**：诊断工具与命令返回只输出条目名与状态，不输出凭据内容。
+- 权威来源见 `windows` crate 的 `Win32_Security_Credentials`；Android 侧仍需单独实现
+  Keystore 保护的存储，**不能**假设同一份代码可平移。
+
 ### 2.2 传输
 
 - 生产环境 IMAP/SMTP 强制 TLS；STARTTLS 必须在认证前成功升级，失败不得降级明文。明文仅限隔离的本机假服务器测试，不提供生产“不安全模式”。
