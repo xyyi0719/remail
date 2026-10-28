@@ -52,7 +52,7 @@
 | R04 | 数据正确性 | flag 并发、移动、删除、发送的重试语义未定义 | 高 | 按 ARCHITECTURE 的操作状态与不确定结果策略测试 | **部分实现**：flag 并发已定（「读快照 → 重放意图 → **回读确认**」，三种失败分类 `retryable`/`uncertain`/`failed`，见 ARCHITECTURE §2.2）；**移动 / 删除 / 发送仍未定义**（P3） |
 | R05 | 数据正确性 | FTS 正文晚到、索引不一致、中文短查询 | 中 | 投影事务、重建校验、1/2 字查询策略测试 | 待实现（P2） |
 | R06 | 安全边界 | HTML/CSS/URL 可绕过图片阻断或调用宿主能力 | 高 | 清洗 + 默认禁网 CSP + WebView 网络/IPC 测试；安全门槛先于真实 HTML 展示 | 待实现（P2）。**当前状态是安全的**：`xremail-message` 只产出**未经清洗的原始 HTML**，没有任何渲染路径；前端只把它当**源码**显示（2026-10-26 接入应用时确认） |
-| R07 | 安全边界 | 钥匙串后端与失败语义、日志脱敏未落地 | 高 | 平台 SecretStore 契约测试；失败不明文落盘 | **部分实现**：契约与 mock 已有（`xremail-api::SecretStore`）；诊断工具**不打印凭据/地址**（脱敏已验证）；**平台后端与失败语义未落地**（P4） |
+| R07 | 安全边界 | 钥匙串后端与失败语义、日志脱敏未落地 | 高 | 平台 SecretStore 契约测试；失败不明文落盘 | **部分实现**：契约与 mock 已有（`xremail-api::SecretStore`）；诊断工具**不打印凭据/地址**（脱敏已验证）；**Windows 后端已落地**（2026-10-26，`secrets/windows_store.rs`，真实往返用例）；**失败语义仍待定**（其它平台是桩，保存时如实报错、不落盘） |
 | R08 | 运行平台 | Android 生命周期、后台预算与通知不确定 | 中 | 早期最小真机 PoC；前台同步可用不代表可后台常驻 | 待验证（P4） |
 | R09 | 运行平台 | 首次同步与大附件耗尽内存/磁盘 | 中 | 有界批量/队列、取消、配额、超限测试，指标注明硬件与网络 | **部分实现**：有界批量已有（每批 200 个 UID；曾因 `1:*` 展开成 1.79 亿个元素把假服务器撑爆 8 GiB，已修）；**大附件、配额、取消未做**（P3） |
 | R10 | 工程验证 | AI 编造 API、测试只复述实现、无独立预期 | 高 | TESTING_STRATEGY 与 AI_DEVELOPMENT_GUIDE 的证据门槛 | **已执行**（2026-10-23）：每批改动都跑**变异测试**——把实现改坏看用例会不会失败，累计 30/30 被捕获；另有假服务器与真实邮箱两条独立证据链。门槛见 [AI_DEVELOPMENT_GUIDE §4](AI_DEVELOPMENT_GUIDE.md) |
@@ -62,7 +62,7 @@
 | R14 | 工程验证 | CI 无业务测试，静态检查通过不代表行为正确 | 高 | 按 [TESTING_STRATEGY §5](TESTING_STRATEGY.md) 的 T1–T10 顺序扩写用例；每阶段出口要求对应测试；用例数作为进度指标写入 CHANGELOG | **进行中**：T1–T5 已扩写（421 个用例），T7 的假服务器已就位；CI 已在 2026-10-26 的代码上**跑绿**（R17 已处理） |
 | R17 | 工程交付 | 13 个提交**从未推送到 GitHub**：全部成果只在本机磁盘上 | 高 | 推送前做 `git ls-remote` / `gh auth status` 连通性探测（本机 github.com 的 DNS 常被劫持到 127.0.0.1）；推送后核对远端提交号 | **已处理**（2026-10-26）：推送前探测通过（`git ls-remote` + `gh auth status`），推送后核对远端提交号 = 本地 HEAD；CI 在 `975ffda` 上**四个 job 全绿** |
 | R18 | 外部接入 | 三家的 **SMTP** 服务器参数与提交行为未实测 | 高 | 同 R01/R02；重点测授权码认证、`STARTTLS` 语义、`8BITMIME`、发信后的 `APPEND` 行为 | 待验证（P3） |
-| R19 | 产品可用性 | 凭据**只驻内存**，关掉应用就得重填授权码 | 中 | 平台钥匙串（P4）或 `local_secret` 里的版本化密文（`xremail-crypto` 已就位）+ 平台 `SecretStore` 适配器 | 已知取舍（2026-10-26）：接入应用时**故意不落盘**（落盘凭据属 P4），先让读信链路可用；P4 补上持久化 |
+| R19 | 产品可用性 | 凭据**只驻内存**，关掉应用就得重填授权码 | 中 | 平台钥匙串（P4）或 `local_secret` 里的版本化密文（`xremail-crypto` 已就位）+ 平台 `SecretStore` 适配器 | **Windows 已处理**（2026-10-26）：授权码进 Windows 凭据管理器，库里只留不透明 `secret_ref`，关掉应用不必重填；**其它平台仍是桩**（不落盘），在那里用仍需重填 |
 | R20 | 协议层 | 两个**只有真实邮箱才暴露**的 IMAP 陷阱：① `EXAMINE` 只认**线路原名**（modified UTF-7），拿解码后的名字去访问会得到 `NO EXAMINE Folder not exist`；② **UID 是邮箱作用域**的，会话停在另一个文件夹时 `UID FETCH <uid>` 返回**空结果**而不是报错 | 高 | 库里存线路原名、显示时再解码（`FolderDto`）；拉正文前先 `EXAMINE` 对应文件夹；两条都有回归用例 | 已缓解（2026-10-26，均由真实 163/QQ/沃 同步暴露） |
 | R16 | 协议层 | imap-proto 0.17 **不认识** `MODIFIED` 这个 response code（它的 `ResponseCode` 枚举里没有），且对未知 code 用 `opt()` 解析——整个 `[MODIFIED] …` 会落进 information 文本。所以条件写失败只能**按文本判别**，拿不到结构化的 code | 中 | 协议层新增 `ProtocolError::ConditionFailed`，按文本判别并写进注释；将来升级 imap-proto 时复核 | 已缓解 |
 | R15 | 协议层 | async-imap 0.12 **吞掉**服务器回的 `NO` / `BAD`：`uid_fetch` / `uid_store` / `uid_search` 在服务器拒绝时返回 `Ok`（只是结果为空），同步引擎会把「服务器拒绝了」当成「写成功了」，本地状态与远端悄悄分叉 | **高** | 新增安全命令层 `xremail_protocol_imap::run_checked`（自己读响应、自己判定 OK/NO/BAD，错误带 response code）；**同步引擎一律用它，不用 async-imap 的同名方法**；已用假服务器把该行为钉成用例 | 已缓解（同步引擎已全面改用 `run_checked`；用例：`server_rejection_is_an_error_not_a_mass_delete`） |
