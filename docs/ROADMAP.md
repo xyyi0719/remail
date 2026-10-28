@@ -60,7 +60,8 @@
 - [ ] 收发链路（P3）：SMTP 一个字没写。
 - [ ] 真实邮箱 **CI 验收**：现在的真实邮箱证据全部来自本机手工运行。
 
-> **仓库已推送**（2026-10-26，`f3d66ad`），CI 在这批代码上跑绿（R17 已处理）。
+> **仓库已推送**（2026-10-26，`975ffda`），CI 在这批代码上**四个 job 全绿**
+> （含 Windows 凭据管理器的真实往返用例）。R17 已处理。
 
 ## 3. 分阶段门槛
 
@@ -92,7 +93,9 @@
 - [x] 新库 / 迁移幂等重跑 / 事务整体回滚测试（**升级路径**已补：第二个迁移 `0002_operation_seq.sql` 已就位）
 - [x] 跨表事务封装（`crates/xremail-store/src/dao/sync.rs`：`commit_folder_sync` 一个事务内完成
   清旧世代 → 写新邮件 → 删服务器已删的 → 更新游标）
-- [x] 实际执行 fmt/clippy/test/typecheck/build（2026-10-23 本地全绿；**CI 尚未跑绿**——仓库未推送，见 ISSUES_AND_RISKS R17）
+- [x] 实际执行 fmt/clippy/test/typecheck/build（2026-10-26 本地全绿；
+  **CI 四个 job 全绿**（Rust ubuntu / Rust windows / Frontend / Docs sanity），
+  仓库已推送，见 ISSUES_AND_RISKS R17）
 - [x] **测试用例扩写 T1–T5**：T1（迁移与事务）、T2（同步纯函数）、T3（密文封装）、
   T4（L2 契约）、T5（MIME / charset）均已完成；Rust 用例 4 → **387**。
   见 [TESTING_STRATEGY §5](TESTING_STRATEGY.md)。

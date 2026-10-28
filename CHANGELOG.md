@@ -7,12 +7,34 @@
 ## [Unreleased]
 
 ### Added
+- **写操作真正回写服务器**（2026-10-26）
+  - 标记已读 / 未读、星标 / 取消星标不再只改本地：意图先落库（`queued`）→
+    `UID STORE` 提交 → **回读 `FLAGS` 逐位确认** → 六态回报前端
+  - `cmd::set_message_flag` 返回 `FlagIntentResult`：`queued` / `applied`（服务器**回读确认过**
+    才为真）/ `state` / `message`——**服务器回 OK 不等于改动生效**
+  - epoch 绑定：意图记下当时的 `uidvalidity`；epoch 变了就作废（`failed` / `epoch_changed`），
+    旧 UID 不会套到另一封信上
+  - `MessageService::list_messages` 叠加未完结意图（`overlay_pending_intents`），
+    UI 立刻变；但那是**本地投影**，不等于服务器确认
+  - 新增 `operation_dao::get_operation`（按 id 读回**这一条**的状态）
+- **平台钥匙串（Windows 凭据管理器）**
+  - `apps/shell/src-tauri/src/secrets/windows_store.rs`：
+    `CredWriteW` / `CredReadW` / `CredDeleteW`，条目名 `xremail:account:<account_id>`，
+    通用凭据类型，持久化 `CRED_PERSIST_LOCAL_MACHINE`
+  - **不静默降级**：其它平台是 `secrets/unsupported.rs` 的桩（`get` 恒 `None`），
+    保存时**如实报错**，绝不落到明文文件或「只存内存」
+  - 数据库里只有不透明的 `account.secret_ref`，授权码本身不落库
+  - 用例**不 mock**：真往这台机器的凭据管理器写条目再读回、覆盖写、删除，
+    并用 `CredEnumerateW` 复查**零残留**
+- **真实邮箱的写操作实测**（`xremail-flag-smoke`，脱敏记录在 `docs/PROTOCOLS.md`）
+  - 163 / QQ / 沃：`UID STORE +FLAGS (\Seen)` 全 **OK**、回读确认**已生效**、
+    **重复发同一个标记也回 OK**（不回 `NO [MODIFIED]`）
+  - 因此「基线过期」那条分支在这三家不会被触发；真正兜底的是**回读确认**
+  - `STORE` 必须以**可写**方式打开邮箱（`SELECT`，不是 `EXAMINE`）——三家都一样
 - **同步引擎接进应用（UI 里能看到真实邮箱的邮件）**
   - 服务层：`MessageService`（文件夹 / 邮件列表 / 正文）与 `SyncService`（一次同步）
   - Command：`sync_account` / `list_folders` / `list_messages` / `open_message`
-  - 前端：账户 → 点「同步」（当场填授权码）→ 文件夹 → 邮件列表 → 正文
-  - **凭据不落盘**：授权码只在这次同步里驻留内存，用完即弃
-    （平台钥匙串属 P4，见 SECURITY §2.1）；`account.secret_ref` 保持 `NULL`
+  - 前端：账户 → 点「同步」→ 文件夹 → 邮件列表 → 正文
   - 一次同步是**有界**的：连接 → 登录 → 逐个文件夹拉取 → 断开
     （还没有调度器 / AccountActor，不做常驻连接）
   - 文件夹名在库里存**线路原样**（modified UTF-7），显示时再解码——
