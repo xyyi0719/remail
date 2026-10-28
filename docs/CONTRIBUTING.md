@@ -252,6 +252,9 @@ AI 工作流与审查模板见 [AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md
 
 1. 从 `main` 切分支：`feat/xxx` / `fix/xxx` / `docs/xxx`
 2. 本地过一遍：`cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` + `npm run build --prefix apps/shell`
+   - 改了 `docs/` 或源码注释里的相对链接，再加一步 `python scripts/check_doc_links.py`
+     （Windows 上用 `python`，CI 上用 `python3`；**本地与 CI 是同一份脚本**）
+   - 链接层级写错一位不会有人立刻发现，所以靠这道闸门——2026-10-26 就靠它逮到过一次断链
 3. PR 描述写清：**改了什么 / 为什么 / 怎么验证 / 截图（UI 变更）**
 4. CI 必须绿
 5. 至少一位 reviewer 批准（可自己 review 别人的）

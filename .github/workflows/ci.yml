@@ -115,49 +115,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check internal doc links
-        run: |
-          python3 - <<'PY'
-          import pathlib, re, sys
-          # 覆盖 docs/ 与根目录的 README/CHANGELOG，避免根目录链接无人校验。
-          targets = sorted(pathlib.Path('docs').rglob('*.md'))
-          targets += [p for p in (pathlib.Path('README.md'), pathlib.Path('CHANGELOG.md')) if p.exists()]
-          bad = []
-          for md in targets:
-              text = md.read_text(encoding='utf-8')
-              # 去掉代码块，避免示例中的路径被误判为链接。
-              text = re.sub(r'```.*?```', '', text, flags=re.S)
-              for m in re.finditer(r'\[[^\]]*\]\(([^)#]+?)(?:#[^)]*)?\)', text):
-                  target = m.group(1)
-                  if target.startswith(('http://', 'https://', 'mailto:')):
-                      continue
-                  resolved = (md.parent / target).resolve()
-                  if not resolved.exists():
-                      bad.append(f"{md}: {target}")
-          if bad:
-              print("Broken internal links:")
-              print("\n".join(bad))
-              sys.exit(1)
-          print(f"All internal doc links OK ({len(targets)} files)")
-          PY
-
-      - name: Check Rust doc-comment links
-        run: |
-          python3 - <<'PY'
-          import pathlib, re, sys
-          # 校验源码注释里指向 docs/ 的相对路径（曾经全部断链）。
-          bad = []
-          for rs in pathlib.Path('.').rglob('*.rs'):
-              if 'target' in rs.parts or 'node_modules' in rs.parts:
-                  continue
-              text = rs.read_text(encoding='utf-8')
-              for m in re.finditer(r'\((\.\.?/[^)\s]+)\)', text):
-                  resolved = (rs.parent / m.group(1)).resolve()
-                  if not resolved.exists():
-                      bad.append(f"{rs}: {m.group(1)}")
-          if bad:
-              print("Broken doc-comment links:")
-              print("\n".join(bad))
-              sys.exit(1)
-          print("All Rust doc-comment links OK")
-          PY
+      - name: Check doc links
+        # 本地与 CI 用**同一份**实现（scripts/check_doc_links.py），
+        # 免得两处各写一套、久了就各说各话。
+        # 覆盖：markdown 内部链接 + 源码注释里指向 docs/ 的相对路径。
+        run: python3 scripts/check_doc_links.py

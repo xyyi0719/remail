@@ -1,4 +1,4 @@
-//! 平台凭据存储（[ARCHITECTURE §8](../../../docs/ARCHITECTURE.md)）。
+//! 平台凭据存储（[ARCHITECTURE §9](../../../../../docs/ARCHITECTURE.md)）。
 //!
 //! ## 这层只管一件事
 //!
