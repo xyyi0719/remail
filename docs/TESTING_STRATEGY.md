@@ -139,7 +139,7 @@ cargo test --workspace -- --list | grep -c ': test$'
 该数字随每次提交变化，写入 CHANGELOG。**用例数本身不是质量证明**——它只用于回答「比上次多了多少」。
 CI 已在 `Test` 步骤后输出该计数（见 `.github/workflows/ci.yml`）。
 
-计数：**524**（2026-10-28，Rust）+ **27**（前端 vitest）。上一次记录是 421（2026-10-28 早）。
+计数：**524**（Windows：本地与 CI 一致）+ **518**（Linux CI，差 6 条是 Windows 专属用例）。上一次记录是 421（2026-10-28 早）。
 新增 103 条 Rust 用例的分布：发信服务层 8、存储层 `send_queue` 18、协议层 SMTP 提交 12、
 MIME 构建（`xremail-message::compose`）、假服务器故障注入与端到端同步、IPC 线格式。
 
@@ -166,7 +166,7 @@ npm run build --prefix apps/shell
 ```
 
 2026-10-28 实测：以上六条在本机全部通过；`cargo test --workspace` 实际执行 **524** 个 Rust 用例
-（0 失败），`npm test` 跑 **27** 个前端用例（5 个文件，0 失败）。
+（0 失败），CI 上 Linux 是 **518**（少 6 条 Windows 专属用例），`npm test` 跑 **27** 个前端用例（5 个文件，0 失败）。
 用例数为进度指标，不等于业务已验证。
 
 **本机构建的坑**（2026-10-28 踩过）：16 核默认并行 16 个 rustc，
