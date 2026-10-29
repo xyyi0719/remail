@@ -249,6 +249,58 @@ export interface Notice {
 }
 
 /**
+ * 待保存 / 待发送的邮件草稿（对应后端 `DraftInput`）。
+ *
+ * 嵌套结构体在 JSON 里也是 camelCase（Rust 侧 `#[serde(rename_all = "camelCase")]`），
+ * 所以这里全是 camelCase 的字段名。
+ */
+export interface DraftInput {
+  accountId: string;
+  /** 已有草稿的 id；新建时为 null。 */
+  id?: string | null;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  bodyText: string;
+  bodyHtml?: string | null;
+  /** 附件内容用 UTF-8 字节数组（后端再转 base64 存库）。 */
+  attachments: { filename: string; contentType: string; bytes: number[] }[];
+}
+
+/** 草稿（对应后端 `DraftDto`）。 */
+export interface DraftDto {
+  id: string;
+  accountId: string;
+  subject: string;
+  to: string[];
+  state: string;
+  updatedAt: number;
+}
+
+/**
+ * 发送结果（对应后端 `SendResult`）。
+ *
+ * 三种状态**含义不同**，界面上必须分开说：
+ *
+ * - `sent`：服务器确认接受，这封信确实出去了；
+ * - `uncertain`：服务器没给确认——**不知道**出去没有。
+ *   这种情况下自动重发可能让用户收到两封信，所以不能自动重试；
+ * - `failed`：服务器明确拒绝了，可以改完重试。
+ *
+ * 把后两种揉成一句「发送失败」是错的：前者重试可能重复发信，
+ * 后者重试却是安全的。
+ */
+export interface SendResult {
+  /** 邮件的 Message-ID。 */
+  messageId: string;
+  /** sent = 服务器确认接受；uncertain = 不确定，**不能自动重发**；failed = 明确失败。 */
+  state: "sent" | "uncertain" | "failed";
+  /** 给用户看的一句话说明。 */
+  detail: string;
+}
+
+/**
  * 把标记意图的结果翻译成一句给用户看的话。
  *
  * 为什么每种状态都单独说一句：见 `FlagIntentState` 的说明——

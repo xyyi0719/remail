@@ -1,5 +1,5 @@
 import { FLAG_FLAGGED, FLAG_SEEN } from "../types";
-import type { Account, Folder, Message } from "../types";
+import type { Account, DraftDto, DraftInput, Folder, Message, SendResult } from "../types";
 import type { InvokeArgs, InvokeImpl } from "./tauriState";
 
 /**
@@ -27,6 +27,14 @@ export interface BackendOptions {
   saveError?: Error | null;
   /** `sync_account` 抛这个错。 */
   syncError?: Error | null;
+  /** `send_message` 返回的状态（默认 `sent`）。 */
+  sendState?: SendResult["state"];
+  /** `send_message` 返回的说明。 */
+  sendDetail?: string | null;
+  /** `send_message` 抛这个错。 */
+  sendError?: Error | null;
+  /** `save_draft` 抛这个错。 */
+  saveDraftError?: Error | null;
 }
 
 export interface Backend {
@@ -37,6 +45,18 @@ export interface Backend {
   forgetError: Error | null;
   saveError: Error | null;
   syncError: Error | null;
+  /** `send_message` 返回的状态。 */
+  sendState: SendResult["state"];
+  /** `send_message` 返回的说明。 */
+  sendDetail: string | null;
+  /** `send_message` 抛这个错。 */
+  sendError: Error | null;
+  /** `save_draft` 抛这个错。 */
+  saveDraftError: Error | null;
+  /** 已经存过的草稿（按 `list_drafts` 的口径存着）。 */
+  drafts: DraftDto[];
+  /** 每次 `send_message` 收到的草稿。 */
+  sentDrafts: DraftInput[];
   /** 所有 invoke 调用（含参数），按顺序。 */
   calls: InvokeCall[];
   /** 装给 `invoke` 的实现。 */
@@ -47,6 +67,13 @@ export interface Backend {
   lastCallTo(cmd: string): InvokeCall | undefined;
 }
 
+/** `send_message` 各状态对应的默认说明。 */
+const DEFAULT_SEND_DETAIL: Record<SendResult["state"], string> = {
+  sent: "服务器已确认接受",
+  uncertain: "连接在等待服务器回应时中断",
+  failed: "服务器明确拒绝了这封信",
+};
+
 export function createBackend(options: BackendOptions = {}): Backend {
   const backend: Backend = {
     accounts: options.accounts ?? [],
@@ -56,6 +83,12 @@ export function createBackend(options: BackendOptions = {}): Backend {
     forgetError: options.forgetError ?? null,
     saveError: options.saveError ?? null,
     syncError: options.syncError ?? null,
+    sendState: options.sendState ?? "sent",
+    sendDetail: options.sendDetail ?? null,
+    sendError: options.sendError ?? null,
+    saveDraftError: options.saveDraftError ?? null,
+    drafts: [],
+    sentDrafts: [],
     calls: [],
     impl: async () => undefined,
     callsTo(cmd: string): InvokeCall[] {
@@ -66,6 +99,9 @@ export function createBackend(options: BackendOptions = {}): Backend {
       return all[all.length - 1];
     },
   };
+
+  // 草稿 id 的自增计数器（模拟后端分配的主键）。
+  let draftCounter = 0;
 
   const handlers: Record<string, (args: InvokeArgs) => unknown> = {
     list_accounts: () => backend.accounts.map((account) => ({ ...account })),
@@ -122,6 +158,49 @@ export function createBackend(options: BackendOptions = {}): Backend {
       charset: null,
     }),
     create_account: () => ({}),
+
+    // ---------------- 写信（草稿 / 发送） ----------------
+
+    save_draft: (args) => {
+      if (backend.saveDraftError) {
+        throw backend.saveDraftError;
+      }
+      const draft = args.draft as DraftInput;
+      // 新建时后端分配 id；带着 id 回来的是更新同一份草稿。
+      const id = draft.id ?? `draft-${++draftCounter}`;
+      const dto: DraftDto = {
+        id,
+        accountId: draft.accountId,
+        subject: draft.subject,
+        to: draft.to,
+        state: "draft",
+        updatedAt: Date.now(),
+      };
+      backend.drafts = [
+        ...backend.drafts.filter((one) => one.id !== id),
+        dto,
+      ];
+      return dto;
+    },
+    list_drafts: (args) => {
+      const accountId = String(args.accountId);
+      return backend.drafts
+        .filter((one) => one.accountId === accountId)
+        .map((one) => ({ ...one }));
+    },
+    send_message: (args) => {
+      if (backend.sendError) {
+        throw backend.sendError;
+      }
+      const draft = args.draft as DraftInput;
+      backend.sentDrafts.push(draft);
+      return {
+        messageId: `<sent-${backend.sentDrafts.length}@example.com>`,
+        state: backend.sendState,
+        detail:
+          backend.sendDetail ?? DEFAULT_SEND_DETAIL[backend.sendState],
+      };
+    },
   };
 
   backend.impl = async (cmd: string, args?: InvokeArgs): Promise<unknown> => {

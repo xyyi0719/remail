@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use sqlx::SqlitePool;
 use xremail_api::SecretValue;
 
-use crate::service::{AccountService, MessageService, SyncService};
+use crate::service::{AccountService, ComposeService, MessageService, SyncService};
 
 /// 应用共享状态。
 #[derive(Debug)]
@@ -22,6 +22,8 @@ pub struct AppState {
     pub messages: MessageService,
     /// 同步服务。
     pub sync: SyncService,
+    /// 发信服务（写信 → 草稿 → 提交给服务器）。
+    pub compose: ComposeService,
     /// 数据库连接池。
     pool: SqlitePool,
     /// 本次会话的账户凭据（**只在内存里**，不落盘）。
@@ -40,6 +42,7 @@ impl AppState {
         accounts: AccountService,
         messages: MessageService,
         sync: SyncService,
+        compose: ComposeService,
         pool: SqlitePool,
     ) -> Self {
         Self {
@@ -47,6 +50,7 @@ impl AppState {
             accounts,
             messages,
             sync,
+            compose,
             pool,
             credentials: Mutex::new(HashMap::new()),
         }

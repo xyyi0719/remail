@@ -19,7 +19,7 @@ use tauri::test::{
 use tauri::webview::InvokeRequest;
 use xremail_core::model::{Folder, Message, MessageFlags};
 use xremail_shell_lib::cmd;
-use xremail_shell_lib::service::{AccountService, MessageService, SyncService};
+use xremail_shell_lib::service::{AccountService, ComposeService, MessageService, SyncService};
 use xremail_shell_lib::state::AppState;
 
 /// 造一个带内存库的应用与 webview。
@@ -41,6 +41,7 @@ fn app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
         AccountService::new(pool.clone()),
         MessageService::new(pool.clone()),
         SyncService::new(pool.clone()),
+        ComposeService::new(pool.clone(), AccountService::new(pool.clone())),
         pool,
     );
 
@@ -57,6 +58,8 @@ fn app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
             cmd::save_credential,
             cmd::forget_credential,
             cmd::set_message_flag,
+            cmd::save_draft,
+            cmd::send_message,
         ])
         .build(mock_context(noop_assets()))
         .expect("构建 mock 应用失败");
@@ -573,5 +576,115 @@ fn set_message_flag_queues_the_intent_when_no_credential_is_available() {
     assert!(
         message.contains("授权码"),
         "说明应当告诉用户去保存授权码，实际是：{message}"
+    );
+}
+
+/// 存草稿的线格式：字段名必须是 camelCase。
+///
+/// 前端 `types.ts` 里写的是 `accountId` / `updatedAt`，
+/// Rust 侧一旦手滑写成 `account_id`，前端就会静默拿到 `undefined`——
+/// **不报错，只是草稿存不进去**。这类漂移只有在线格式测试里才拦得住。
+#[test]
+fn save_draft_uses_camel_case_on_the_wire() {
+    let (_app, webview) = app();
+
+    get_ipc_response(
+        &webview,
+        request(
+            "create_account",
+            json!({ "request": valid_body("user@163.com") }),
+        ),
+    )
+    .expect("建账户应当成功");
+    let list: serde_json::Value = get_ipc_response(&webview, request("list_accounts", json!({})))
+        .expect("列出账户应当成功")
+        .deserialize()
+        .expect("反序列化失败");
+    let account_id = list[0]["id"].as_str().expect("账户应当有 id").to_string();
+
+    let body = get_ipc_response(
+        &webview,
+        request(
+            "save_draft",
+            json!({
+                "draft": {
+                    "accountId": account_id,
+                    "id": null,
+                    "to": ["friend@example.com"],
+                    "cc": [],
+                    "bcc": [],
+                    "subject": "你好",
+                    "bodyText": "正文",
+                    "bodyHtml": null,
+                    "attachments": []
+                }
+            }),
+        ),
+    )
+    .expect("存草稿应当成功");
+    let value: serde_json::Value = body.deserialize().expect("反序列化失败");
+
+    assert_eq!(value["subject"], json!("你好"));
+    assert_eq!(value["to"], json!(["friend@example.com"]));
+    assert_eq!(value["state"], json!("draft"));
+    assert!(value["id"].is_string(), "草稿应当有 id");
+
+    let keys = value.as_object().expect("应当是对象");
+    for field in ["accountId", "updatedAt"] {
+        assert!(
+            keys.contains_key(field),
+            "字段名必须是 {field}（前端 types.ts 就这么写的），实际是：{:?}",
+            keys.keys().collect::<Vec<_>>()
+        );
+    }
+    assert!(
+        !keys.contains_key("account_id"),
+        "出现了 snake_case 字段名，前端读不到"
+    );
+}
+
+/// 没凭据就发信 → 报错要**说清楚**是缺授权码，而不是笼统的失败。
+#[test]
+fn send_message_without_a_credential_says_so() {
+    let (_app, webview) = app();
+
+    get_ipc_response(
+        &webview,
+        request(
+            "create_account",
+            json!({ "request": valid_body("user@163.com") }),
+        ),
+    )
+    .expect("建账户应当成功");
+    let list: serde_json::Value = get_ipc_response(&webview, request("list_accounts", json!({})))
+        .expect("列出账户应当成功")
+        .deserialize()
+        .expect("反序列化失败");
+    let account_id = list[0]["id"].as_str().expect("账户应当有 id").to_string();
+
+    let err = get_ipc_response(
+        &webview,
+        request(
+            "send_message",
+            json!({
+                "draft": {
+                    "accountId": account_id,
+                    "id": null,
+                    "to": ["friend@example.com"],
+                    "cc": [],
+                    "bcc": [],
+                    "subject": "你好",
+                    "bodyText": "正文",
+                    "bodyHtml": null,
+                    "attachments": []
+                }
+            }),
+        ),
+    )
+    .expect_err("没有授权码应当报错");
+
+    assert!(
+        err.to_string().contains("授权码"),
+        "报错应当说明缺授权码，实际是：{err}"
     );
 }

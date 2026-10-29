@@ -29,6 +29,9 @@ xremail-api = { workspace = true }
 # 同步引擎与 IMAP 协议层。
 xremail-sync = { workspace = true }
 xremail-protocol-imap = { workspace = true }
+# SMTP 协议层（真发信）与 MIME 构建（发信用的字节）。
+xremail-protocol-smtp = { workspace = true }
+xremail-message = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -46,6 +49,9 @@ windows = { workspace = true }
 # 临时目录用于测试库文件。
 tempfile = "3"
 tokio = { workspace = true }
+# 假 SMTP 服务器：发信链路必须在 CI 里能跑，不能依赖真实邮箱。
+xremail-testkit = { workspace = true }
+xremail-protocol-smtp = { workspace = true }
 # tauri 的 test 特性：提供 mock_builder / get_ipc_response，
 # 用来测 Command 层的 IPC 序列化（见 tests/command_ipc.rs）。
 tauri = { version = "2", features = ["test"] }

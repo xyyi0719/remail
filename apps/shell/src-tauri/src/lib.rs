@@ -21,7 +21,7 @@ pub mod state;
 
 use tauri::Manager;
 
-use crate::service::{AccountService, MessageService, SyncService};
+use crate::service::{AccountService, ComposeService, MessageService, SyncService};
 use crate::state::AppState;
 
 /// 数据库文件名（位于数据目录下）。
@@ -69,6 +69,8 @@ pub fn run() {
             cmd::save_credential,
             cmd::forget_credential,
             cmd::set_message_flag,
+            cmd::save_draft,
+            cmd::send_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Xremail application");
@@ -97,6 +99,7 @@ fn init_storage(app: &tauri::AppHandle) -> Result<AppState, Box<dyn std::error::
         AccountService::new(pool.clone()),
         MessageService::new(pool.clone()),
         SyncService::new(pool.clone()),
+        ComposeService::new(pool.clone(), AccountService::new(pool.clone())),
         pool,
     ))
 }

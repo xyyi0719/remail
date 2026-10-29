@@ -16,6 +16,7 @@ use xremail_core::model::{
 };
 use xremail_store::dao::operation as operation_dao;
 
+use crate::service::compose::{DraftDto, DraftInput, SendResult};
 use crate::service::credential::CredentialService;
 use crate::service::current_time_ms;
 use crate::service::message::{FolderDto, MessageFlag};
@@ -528,6 +529,51 @@ async fn resolve_credential(
 
     CredentialService::new(state.accounts.clone())
         .resolve_credential(account)
+        .await
+        .map_err(|e| user_error(&e))
+}
+
+/// 存草稿（新建或更新）。
+///
+/// 前端每 800ms 防抖存一次，所以这条命令**必须幂等**：
+/// 同一个 id 反复存，只会把内容覆盖成最新的一份。
+///
+/// 已经发出去或结果未确认的信**不能**再当草稿改——那时用户看到的
+/// 和实际发出去的就不是同一封了（见 [ARCHITECTURE §5](../../../../docs/ARCHITECTURE.md)）。
+#[tauri::command]
+pub async fn save_draft(state: State<'_, AppState>, draft: DraftInput) -> Result<DraftDto, String> {
+    state
+        .compose
+        .save_draft(&draft)
+        .await
+        .map_err(|e| user_error(&e))
+}
+
+/// 发送一封信。
+///
+/// 返回值把三种结局分开说（`sent` / `uncertain` / `failed`），
+/// 不要在 Command 层把它们揉成一句「发送失败」——
+/// 前端要靠这个区分来决定能不能重发（见 `types.ts` 的 `SendResult`）。
+#[tauri::command]
+pub async fn send_message(
+    state: State<'_, AppState>,
+    draft: DraftInput,
+) -> Result<SendResult, String> {
+    let account = state
+        .accounts
+        .get(&draft.account_id)
+        .await
+        .map_err(|e| user_error(&e))?
+        .ok_or_else(|| format!("账户 {} 不存在", draft.account_id))?;
+
+    // 凭据：内存里的优先，没有再去平台钥匙串取。
+    let Some(credential) = resolve_credential(&state, &account).await? else {
+        return Err("还没有这个账户的授权码，请先保存后再发送".to_string());
+    };
+
+    state
+        .compose
+        .send(&draft, &credential)
         .await
         .map_err(|e| user_error(&e))
 }

@@ -6274,9 +6274,12 @@ dependencies = [
  "windows",
  "xremail-api",
  "xremail-core",
+ "xremail-message",
  "xremail-protocol-imap",
+ "xremail-protocol-smtp",
  "xremail-store",
  "xremail-sync",
+ "xremail-testkit",
 ]
 
 [[package]]

@@ -531,3 +531,223 @@ body {
   color: inherit;
   font: inherit;
 }
+
+/* ---------------------------------------------------------------- 写信 */
+
+/* 「写邮件」入口：只有在账户已选中时才有意义。 */
+.compose-launch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.compose-launch-button {
+  padding: 0.45rem 1.25rem;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.compose-launch-button:hover {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.compose-launch-hint {
+  font-size: 0.8125rem;
+  opacity: 0.7;
+}
+
+.compose-panel {
+  margin-top: 1rem;
+}
+
+.compose-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.compose-close {
+  padding: 0.25rem 0.7rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.compose-close:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.compose-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.6rem 0.75rem;
+  align-items: end;
+}
+
+.compose-bcc-toggle {
+  align-self: end;
+  justify-self: start;
+  padding: 0.25rem 0.7rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.compose-bcc-toggle:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+/* 「密送不会显示在收件人列表里」——这句提示必须一直在。 */
+.compose-hint {
+  margin: 0.5rem 0 0.9rem;
+  font-size: 0.8125rem;
+  opacity: 0.7;
+}
+
+.compose-body {
+  min-height: 9rem;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.4rem;
+  resize: vertical;
+}
+
+.compose-body:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: 1px;
+}
+
+.compose-file {
+  font-size: 0.875rem;
+}
+
+.compose-attachments {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.compose-attachment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 4px 10px;
+  font-size: 0.875rem;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 6px;
+}
+
+.compose-attachment-name {
+  overflow-wrap: anywhere;
+}
+
+.compose-attachment-remove {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.compose-attachment-remove:hover {
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+  color: color-mix(in srgb, #dc2626 70%, currentColor);
+}
+
+.compose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.compose-saved {
+  font-size: 0.8125rem;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-send {
+  padding: 0.45rem 1.5rem;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.compose-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/*
+ * 三种发送结果三套配色：「已发送」绿、「不知道有没有发出去」橙、
+ * 「明确失败」红。配色分开是为了让用户一眼分清
+ * 「确定发出去了」和「不知道发出去了」——后者不能随便重发。
+ */
+.compose-result {
+  --compose-accent: #2563eb;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--compose-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--compose-accent) 12%, transparent);
+  color: color-mix(in srgb, var(--compose-accent) 70%, currentColor);
+}
+
+.compose-result-sent {
+  --compose-accent: #16a34a;
+}
+
+.compose-result-uncertain {
+  --compose-accent: #d97706;
+}
+
+.compose-result-failed {
+  --compose-accent: #dc2626;
+}
+
+.compose-result-detail {
+  font-size: 0.875rem;
+}
+
+.compose-error {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+  color: #b91c1c;
+}

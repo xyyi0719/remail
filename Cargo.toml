@@ -40,6 +40,8 @@ xremail-api = { path = "crates/xremail-api" }
 xremail-sync = { path = "crates/xremail-sync" }
 xremail-protocol-imap = { path = "crates/xremail-protocol-imap" }
 xremail-protocol-smtp = { path = "crates/xremail-protocol-smtp" }
+xremail-message = { path = "crates/xremail-message" }
+xremail-testkit = { path = "crates/xremail-testkit" }
 
 anyhow = "1"
 thiserror = "2"

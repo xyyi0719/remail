@@ -1,9 +1,10 @@
 import AccountForm from "./components/AccountForm";
 import AccountList from "./components/AccountList";
+import ComposePanel from "./components/ComposePanel";
 import FolderList from "./components/FolderList";
 import MessageList from "./components/MessageList";
 import MessageView from "./components/MessageView";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
@@ -45,6 +46,10 @@ function App() {
   const [folderId, setFolderId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
+
+  // 写信面板：存的是**打开面板时**那个账户的 id——
+  // 用户中途换账户的话，面板里的收件人还是按开面板时的身份准备的。
+  const [composeAccountId, setComposeAccountId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -208,6 +213,12 @@ function App() {
     [handleSetFlag],
   );
 
+  // 写信面板挂在哪个账户上（账户列表里找它的邮箱，用来显示给用户看）。
+  const composeAccount = useMemo(
+    () => accounts?.find((account) => account.id === composeAccountId) ?? null,
+    [accounts, composeAccountId],
+  );
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -269,6 +280,27 @@ function App() {
 
           {accountId && (
             <>
+              <div className="compose-launch">
+                <button
+                  type="button"
+                  className="compose-launch-button"
+                  onClick={() => setComposeAccountId(accountId)}
+                >
+                  写邮件
+                </button>
+                <span className="compose-launch-hint">
+                  用选中的账户发信，改动会自动存草稿
+                </span>
+              </div>
+
+              {composeAccountId && composeAccount && (
+                <ComposePanel
+                  accountId={composeAccount.id}
+                  accountEmail={composeAccount.email}
+                  onClose={() => setComposeAccountId(null)}
+                />
+              )}
+
               <FolderList
                 folders={folders}
                 selectedId={folderId}
