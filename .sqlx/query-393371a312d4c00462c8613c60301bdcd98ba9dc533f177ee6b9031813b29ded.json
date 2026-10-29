@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO send_queue (\n            id, account_id, envelope, headers,\n            body_text, body_html, message_bytes, message_id, idempotency_key,\n            state, attempts, error_kind, error_message, created_at, updated_at\n        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'draft', 0, NULL, NULL, ?, ?)\n        ON CONFLICT (id) DO UPDATE SET\n            envelope = excluded.envelope,\n            headers = excluded.headers,\n            body_text = excluded.body_text,\n            body_html = excluded.body_html,\n            message_bytes = NULL,\n            message_id = NULL,\n            state = 'draft',\n            attempts = 0,\n            error_kind = NULL,\n            error_message = NULL,\n            updated_at = excluded.updated_at\n        WHERE send_queue.state IN ('draft', 'retryable', 'failed')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "393371a312d4c00462c8613c60301bdcd98ba9dc533f177ee6b9031813b29ded"
+}

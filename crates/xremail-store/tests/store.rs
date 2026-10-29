@@ -142,6 +142,7 @@ async fn migration_creates_all_expected_tables() {
         "message",
         "message_body",
         "rule",
+        "send_attachment",
         "send_queue",
     ] {
         assert!(

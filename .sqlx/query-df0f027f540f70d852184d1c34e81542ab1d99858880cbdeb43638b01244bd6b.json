@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        DELETE FROM send_attachment\n        WHERE send_id = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "df0f027f540f70d852184d1c34e81542ab1d99858880cbdeb43638b01244bd6b"
+}

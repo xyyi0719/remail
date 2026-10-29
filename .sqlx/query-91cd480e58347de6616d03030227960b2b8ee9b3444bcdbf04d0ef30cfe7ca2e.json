@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        DELETE FROM send_queue\n        WHERE id = ? AND state = 'draft'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "91cd480e58347de6616d03030227960b2b8ee9b3444bcdbf04d0ef30cfe7ca2e"
+}

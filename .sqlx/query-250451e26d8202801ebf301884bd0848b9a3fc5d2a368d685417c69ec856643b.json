@@ -1,0 +1,194 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id, account_id, envelope, headers,\n               body_text, body_html, message_bytes, message_id, idempotency_key,\n               state, attempts, error_kind, error_message, created_at, updated_at\n        FROM send_queue\n        WHERE account_id = ?\n        ORDER BY\n            CASE state\n                WHEN 'draft' THEN 0\n                WHEN 'queued' THEN 1\n                WHEN 'running' THEN 2\n                WHEN 'retryable' THEN 3\n                WHEN 'uncertain' THEN 4\n                WHEN 'failed' THEN 5\n                ELSE 6\n            END,\n            created_at ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "account_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "name": "envelope",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "envelope"
+          }
+        }
+      },
+      {
+        "name": "headers",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "headers"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "body_text"
+          }
+        }
+      },
+      {
+        "name": "body_html",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "body_html"
+          }
+        }
+      },
+      {
+        "name": "message_bytes",
+        "ordinal": 6,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "message_bytes"
+          }
+        }
+      },
+      {
+        "name": "message_id",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "idempotency_key",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "idempotency_key"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "attempts",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "name": "error_kind",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "error_kind"
+          }
+        }
+      },
+      {
+        "name": "error_message",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "error_message"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "send_queue",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "250451e26d8202801ebf301884bd0848b9a3fc5d2a368d685417c69ec856643b"
+}
