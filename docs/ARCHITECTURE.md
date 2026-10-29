@@ -25,7 +25,7 @@
 | xremail-api | 应用服务 DTO、L2 最小契约 | 不实现网络；不强迫其他模块反向依赖 UI |
 | xremail-store | SQLite、迁移、事务、检索投影、操作队列 | 不发网络请求 |
 | xremail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试；**不依赖 xremail-message** |
-| xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once。**当前只有只读探测**（EHLO / STARTTLS / AUTH / 证书体检），提交路径未写 |
+| xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once。**只读探测**（EHLO / STARTTLS / AUTH / 证书体检）与**提交路径**（`submit_message`：MAIL FROM / RCPT TO / DATA / QUIT）均已实现；提交路径只做 ASCII 信封地址 + RFC 2047 编码的标题（不做 SMTPUTF8） |
 | xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/message/core，不认识 Tauri |
 | xremail-message | MIME 结构、charset 解码、RFC 5322 头 | 不落库、不加载远程资源；**不做 HTML 清洗**（渲染层的事） |
 | xremail-provider | 可覆盖预设、接入诊断 | 企业邮箱需管理员配置，不能按品牌猜服务器 |
@@ -192,6 +192,44 @@ move / delete / append / SMTP 尚未定义（等假服务器补齐 COPY / MOVE /
 
 epoch 绑定：意图落库时记下当时的 `uidvalidity`。提交前发现 epoch 变了 → 这条意图
 **作废**（`failed` / `epoch_changed`），因为旧 UID 在新 epoch 下指向另一封信。
+
+**实现落点（2026-10-28）——发信路径**：`send_queue` 表与
+`xremail-store::dao::send_queue` 已落地，状态枚举在
+`xremail-core::model::SendState`（与 `mail_operation` 同名六态）。
+`apps/shell/src-tauri/src/service/compose.rs` 的流程是：
+
+1. 落草稿（`draft`）→ 2. 构建并**冻结字节**（`queued`，字节写进库里不再变）→
+3. **抢占**（CAS：两个发送器只有一个能拿到 `running`）→ 4. 提交给服务器 →
+5. 记结局 → 6. **回读**这一行确认。
+
+两条硬规则，都是从「重复发信」这个代价反推出来的：
+
+- **字节一旦冻结就不再变**。排队之后改内容，必须另存成新草稿——
+  否则用户看到的和实际发出去的就不是同一封了。
+- **不确定就不自动重发**。`DATA` 发出后没拿到最终应答 → `uncertain`，
+  这封信**可能**已经在服务器手里，盲目重发会让用户收到两封。
+  只有明确没发出去的失败（4xx 拒收、连不上、TLS 失败）才记 `retryable`。
+
+**前置失败也要记账**：连不上 / TLS 握手失败发生在**任何命令发出之前**，
+所以这封信**肯定没发出去**，重发是安全的。但它**不能**当成「什么都没发生」——
+不记账，这一行就会永远停在 `running`，下次启动的回收逻辑会把它当成
+「发到一半」变成 `uncertain`，把一个「肯定没发」的信说成「可能发了」。
+所以前置失败写回 `retryable`，并在给用户看的说明里讲清楚。
+
+**Bcc 只进信封**：进 `RCPT TO`，不进邮件头（没有 `Bcc:` 行）。
+信封收件人 = To ∪ Cc ∪ Bcc（去重），与显示头分开。
+
+**TLS 回退**：服务器拒绝 TLS 1.3 时，**用同一条链路重试一次 TLS 1.2**。
+证书校验**一点不放松**——回退只发生在协议版本上，且结果里写明回退过。
+
+**协议层的范围边界**（2026-10-28，有意为之，不是遗漏）：
+`submit_message` 一次一封（连一次 → 认证一次 → 发一封 → `QUIT` 一次）；
+**不做 `RSET`**（中途失败直接断开，不把服务器状态留给下一次调用）；
+**不做流式 `DATA`**（整封进内存，几十 MB 的附件会有压力）；
+**不做 `SMTPUTF8`**（QQ 宣告了、163 没有，地址与标题的编码策略定下来之前发它会被整个事务拒收）；
+`XOAUTH2` 明确 `Unsupported`（它要的是 OAuth 令牌，不是账号口令）。
+服务器**没宣告 `AUTH`** 时会告警并跳过认证直接提交（对应本地中继这类场景），
+但**不会**在明文上送口令——`STARTTLS` 缺失是硬失败。
 
 ## 6. flag 并发语义
 

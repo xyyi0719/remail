@@ -42,7 +42,7 @@
 - [x] `xremail-diagnostics`：诊断工具（字符集抽样，只输出编码名与计数）
 - [x] `xremail-api`：新增应用服务 DTO `NewAccountRequest`（校验 + 转领域对象，14 个用例）。
 - [x] shell：服务层 + 真实持久化链路 + React 账户列表（2026-10-22）；服务测试 10 + IPC 测试 8。
-  - **实测账本**：Rust 用例 4 → **421**（新增 417 个）
+  - **实测账本**：Rust 用例 4 → **524**（新增 520 个）
 - [x] **同步引擎接进应用**（2026-10-26）：UI 里能看到**真实邮箱**里的邮件
   - 服务层 `MessageService` / `SyncService`；Command 8 个；前端：账户 → 同步 → 文件夹 → 邮件 → 正文
   - 验收：三家真实账号各跑通一次（163 / QQ / 沃，6 个文件夹全部同步，正文解码零错误）
@@ -195,11 +195,25 @@
     - **126**：本机凭据文件里没有 126 账号，**待用户补授权码**后再测。
     - 原始报告见 [PROTOCOLS.md「SMTP 实测」](PROTOCOLS.md#smtp-实测2026-10-28-起)。
   - 仍缺：**发信后的 \`APPEND\` 行为**（服务器是否存已发送副本）——必须用专用测试账户实测。
-- [ ] SMTP 提交、草稿、附件与签名；服务器已发送副本策略先实测，避免重复 APPEND。
-- [ ] envelope recipients 与显示头分离，Bcc 不泄漏且不破坏 To/Cc。
-- [ ] DATA 最终应答丢失测试与用户可见 uncertain 状态；不盲重发。
-  - 状态机已有雏形（`mail_operation` 的六种状态含 `uncertain`），但**发信路径还没接**
-- [ ] **测试用例扩写 T8 续**（SMTP 提交阶段分类、重复投递防护）。
+- [x] SMTP 提交、草稿、附件与签名；服务器已发送副本策略先实测，避免重复 APPEND。
+  - [x] **提交路径 + 草稿 + 附件**（2026-10-28）：协议层 `submit_message`
+        （MAIL FROM / RCPT TO / DATA / QUIT + 分阶段结果）、存储层 `send_queue` 表与 DAO、
+        服务层 `ComposeService`（落草稿 → **冻结字节** → 抢占 → 提交 → 记结局 → 回读）、
+        前端写信面板（800ms 防抖自动存草稿）
+  - [ ] **签名（DKIM / 域签名）未做**——属于 MIME / 发送链路的上游，不在协议层
+  - [ ] **已发送副本策略未实测**（服务器是否 `APPEND` 到「已发送」）——
+        在实测之前**不自动**往「已发送」里塞副本，免得两边都存一份
+- [x] envelope recipients 与显示头分离，Bcc 不泄漏且不破坏 To/Cc。
+  - Bcc **只进信封**（`RCPT TO`），不进邮件头；信封收件人 = To ∪ Cc ∪ Bcc 去重
+  - 用例：`bcc_recipient_is_only_in_the_envelope`
+- [x] DATA 最终应答丢失测试与用户可见 uncertain 状态；不盲重发。
+  - 状态机已接上发信路径：`SendState::Uncertain` **不可自动重试**（服务器可能已收下它）
+  - 前端 `SendResult.state` 三态分开显示，`uncertain` 时**禁用发送按钮**
+  - 用例：`missing_server_reply_is_uncertain_not_retryable`
+- [x] **测试用例扩写 T8 续**（SMTP 提交阶段分类、重复投递防护）。
+  - 提交阶段分类：`NotSent`（前置失败，可重试）/ `Rejected`（服务器拒收）/ `Uncertain`（DATA 后丢应答）
+  - 重复投递防护：不确定的信不自动重发 + 冻结字节后不可改内容
+  - 用例：服务层 8 条、存储层 18 条、IPC 2 条、协议层 12 条（**不依赖真实邮箱**）
 
 **出口**：专用测试账户发信成功与失败恢复都有证据，收件人/附件/Bcc 正确。
 

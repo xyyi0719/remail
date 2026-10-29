@@ -38,6 +38,13 @@ Mock 通过不能证明服务商兼容。Playwright 浏览器通过不能证明 
 - 无 CONDSTORE：新快照 + bit 级意图重放；不宣称消除了竞态。
 - 服务端已执行但应答丢失：flag 可核对重放；MOVE/COPY/APPEND/SMTP 不得一概盲重试。
 - SMTP 最终 DATA 已提交但未收到确认：进入 `uncertain`，提示可能已发送，手动重发前确认。
+- **发信路径的三个具体断言**（2026-10-28 已全部有用例）：
+  - 前置失败（连不上 / TLS 握手失败）→ 这封信**肯定没发出去** → 记 `retryable`，
+    **不能**停在 `running`（否则会被回收逻辑误判成「发到一半」）
+  - 服务器 4xx 拒收 → `retryable`；5xx 拒收 → `failed`（重发多少次都一样）
+  - DATA 后丢应答 → `uncertain`，**不自动重发**
+- 排队后冻结的字节不可改：用户改内容必须另存成新草稿
+- Bcc 只进信封（`RCPT TO`），不进邮件头
 - 无 UIDPLUS 时禁止普通 EXPUNGE 清除其他客户端标记的邮件；需保守策略或提示不支持。
 - 队列上限、取消、重试预算、永久失败与退出重启后的状态恢复。
 
@@ -132,6 +139,10 @@ cargo test --workspace -- --list | grep -c ': test$'
 该数字随每次提交变化，写入 CHANGELOG。**用例数本身不是质量证明**——它只用于回答「比上次多了多少」。
 CI 已在 `Test` 步骤后输出该计数（见 `.github/workflows/ci.yml`）。
 
+计数：**524**（2026-10-28，Rust）+ **27**（前端 vitest）。上一次记录是 421（2026-10-28 早）。
+新增 103 条 Rust 用例的分布：发信服务层 8、存储层 `send_queue` 18、协议层 SMTP 提交 12、
+MIME 构建（`xremail-message::compose`）、假服务器故障注入与端到端同步、IPC 线格式。
+
 ### 5.4 明确不做的
 
 - 不追求覆盖率百分比达标；不为此写无断言的用例凑数
@@ -148,13 +159,22 @@ CI 已在 `Test` 步骤后输出该计数（见 `.github/workflows/ci.yml`）。
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo test --workspace --no-fail-fast
 npm run typecheck --prefix apps/shell
+npm test --prefix apps/shell        # vitest run
 npm run build --prefix apps/shell
 ```
 
-2026-10-20 实测：以上五条在 Windows 上全部通过；`cargo test` 实际执行 4 个用例（`xremail-core` 错误分类），其余 4 个测试目标为 0 用例。
+2026-10-28 实测：以上六条在本机全部通过；`cargo test --workspace` 实际执行 **524** 个 Rust 用例
+（0 失败），`npm test` 跑 **27** 个前端用例（5 个文件，0 失败）。
 用例数为进度指标，不等于业务已验证。
+
+**本机构建的坑**（2026-10-28 踩过）：16 核默认并行 16 个 rustc，
+带调试信息时内存峰值超过 31 GB，**rustc 会被 OOM 杀掉**，
+留下的半截产物让后续构建报 `found invalid metadata files for crate ...`——
+看着像 cargo 的锅，实际是内存不够。两种避开方式：
+`-j 4` 限并发，或 `CARGO_PROFILE_DEV_DEBUG=0` 关掉调试信息（省内存也省磁盘）。
+CI 的 runner 内存更小，必要时同样要限并发。
 
 现有 CI 的具体执行项以 `.github/workflows/ci.yml` 为准；有 workflow 不等于远端已经跑绿。
 Vitest、Playwright、假协议服务器、fuzz、故障注入尚待建设，不在本文虚构已通过结果。

@@ -7,6 +7,30 @@
 ## [Unreleased]
 
 ### Added
+- **发信链路（P3）**：从「能读」到「能发」
+  - **MIME 构建**（`crates/xremail-message::compose`）：按 RFC 5322 组装邮件；
+    主题 / 发件人按 RFC 2047 编码，附件 base64，正文 quoted-printable
+  - **发送队列**（`crates/xremail-store` 新增 `send_queue` 表与 DAO）：
+    草稿 → 排队 → 抢占 → 提交 → 记结局，六态与 `mail_operation` 对齐
+  - **服务层**（`apps/shell/src-tauri/src/service/compose.rs`）：
+    落草稿 → **冻结字节** → 抢占 → 提交 → 记结局 → 回读确认
+  - **Tauri 命令**：`save_draft` / `send_message`（参数与前端契约已对齐）
+  - **三种结局必须分清**：`sent`（服务器回了 250，信确实出去了）/
+    `uncertain`（命令已发出、没拿到应答，**不知道**出去没有，**不能自动重发**）/
+    `failed`（明确没发出去）
+  - **前置失败也要记账**：连不上、TLS 握手失败都发生在**任何命令发出之前**，
+    所以这封信**肯定没发出去**——但仍要写回库（`retryable`）。
+    否则那一行会永远停在 `running`，被下次启动的回收逻辑误判成「发到一半」，
+    把一个「肯定没发」的信说成「可能发了」，用户就不敢重发了
+  - **Bcc 只进信封**：不进邮件头，收件人之间互相看不见
+  - **TLS 1.3 → 1.2 回退**：服务器拒绝 TLS 1.3 时自动重试整条链路，
+    证书校验**一点不放松**（回退只发生在协议版本上），结果里写明回退
+  - **前端写信面板**：收件人 / 抄送 / 密送 / 主题 / 正文 / 附件 /
+    800ms 防抖自动存草稿；三种结局分开显示，`uncertain` 时**禁用发送按钮**
+  - 协议层：`crates/xremail-protocol-smtp` 新增 `submit_message`
+    （`MAIL FROM` / `RCPT TO` / `DATA` / `QUIT` 全链路 + 分阶段结果）
+  - 用例：服务层 8 条、存储层 18 条、IPC 2 条、协议层 12 条——
+    **全部不依赖真实邮箱**（服务器是 `xremail-testkit` 里的假 SMTP 服务器）
 - **SMTP 只读探测**（2026-10-28）：新 crate `crates/xremail-protocol-smtp`
   - 诊断工具 `xremail-smtp-probe`：**只实现** `EHLO` / `STARTTLS` / `AUTH` / `QUIT` 四个动词，
     **代码里根本没有** `MAIL FROM` / `RCPT TO` / `DATA` —— 不是开关关掉，是不存在，探测阶段不可能误发邮件
@@ -84,6 +108,12 @@
   用于测非 UTF-8 编码（GBK 正文）
 
 ### Fixed
+- **文档里的相对链接断了 3 处**（`scripts/check_doc_links.py` 逮到）：
+  `cmd.rs` 与 `service/compose.rs` 里的 `docs/ARCHITECTURE.md` 层级写错，
+  `xremail-protocol-smtp/tests/submit_against_fake.rs` 指向了不存在的
+  `../probe_against_fake.rs`。
+  修法：按文件所在目录的实际层级重算 `../` 数量；
+  顺带把**全仓库**同类链接一起校正（脚本每文件只报第一处断链，漏的会更多）
 - **EXAMINE 必须用线路上的原名（modified UTF-7）**——两个真 bug，靠真实邮箱才暴露：
   - 症状：163 的 6 个文件夹只同步出 1 个（INBOX），其余 5 个回
     `NO EXAMINE Folder not exist`
@@ -268,6 +298,19 @@
 - `xremail-core` 的 `Folder` 新增 `uidvalidity` 字段（该文件夹的 **epoch**）：它本来就是领域概念（ARCHITECTURE §4.3 要求按 epoch 切换游标），此前模型里没有，DAO 无法往返
 
 ### Changed
+- **文档对齐到发信链路的真实状态**（2026-10-28）：
+  - `docs/ARCHITECTURE.md` §5：补上发信路径的**实现落点**（落草稿 → 冻结字节 → 抢占 →
+    提交 → 记结局 → 回读）与三条硬规则（冻结后不可改、不确定不自动重发、前置失败也要记账）；
+    补上协议层的**范围边界**（不做 `RSET` / 不做流式 `DATA` / 不做 `SMTPUTF8` /
+    `XOAUTH2` 明确不支持——这些是有意的取舍）
+  - `docs/ROADMAP.md`：P3 的提交路径、草稿、附件、envelope 分离、不确定态、
+    T8 续写勾上；**DKIM 与「已发送副本 `APPEND` 行为」明确标为未做**
+  - `docs/PROTOCOLS.md`：新增「提交路径的状态」——三家的探测结论**直接决定能不能发**，
+    并写明「还没用真实测试账户真的发过一封信」
+  - `docs/ISSUES_AND_RISKS.md`：R04（发送已定义并实现）、R18（提交路径已实现但未实测真发）、
+    R21（「换 TLS 版本」这条路对沃无效——问题在密钥交换套件）
+  - `docs/TESTING_STRATEGY.md`：用例数更新为 **524**（Rust）+ **27**（前端）；
+    补记本机 16 核构建会被 OOM 杀掉 rustc 的坑与两种避开方式
 - **文档与代码对齐（2026-10-23）**——此前文档比代码落后了好几轮：
   - `docs/ROADMAP.md`：P0 剩余项（跨表事务封装、升级路径测试）已完成；
     P1 的「沃邮箱待实测」「QQ 与沃未开始」「T5」「按需正文」均已完成；
@@ -306,17 +349,17 @@
 - 文档作者/负责人署名为 xyyi0719
 
 ### Added
-- ** crate**：MIME 结构、字符集解码、RFC 5322 头
-  - ：UTF-8 / GB2312 / GBK / GB18030 / Big5 / ISO-8859-*（encoding_rs）
+- **`xremail-message` crate**：MIME 结构、字符集解码、RFC 5322 头
+  - **字符集**：UTF-8 / GB2312 / GBK / GB18030 / Big5 / ISO-8859-*（encoding_rs）
   - 无 charset 时的**猜测**（先严格 UTF-8 → GB18030 → windows-1252）
-  - ：base64 / quoted-printable / 7bit / 8bit
-  - ：RFC 2047 编码字（含「相邻编码字之间空白要丢掉」）
-  - ：Content-Type 参数、multipart **递归**拆解、头字段折行
-  - ：整封邮件 → 主题 / 地址 / 日期 / 纯文本 / 原始 HTML / 附件标记
+  - **内容编码**：base64 / quoted-printable / 7bit / 8bit
+  - **编码字**：RFC 2047 编码字（含「相邻编码字之间空白要丢掉」）
+  - **结构解析**：Content-Type 参数、multipart **递归**拆解、头字段折行
+  - **解析结果**：整封邮件 → 主题 / 地址 / 日期 / 纯文本 / 原始 HTML / 附件标记
   - **HTML 清洗不做**——那是渲染层的事（ARCHITECTURE §7）
-- ** crate**：诊断工具（同时用协议层与 MIME 层，
+- **`xremail-diagnostics` crate**：诊断工具（同时用协议层与 MIME 层，
   所以单独成 crate——这两层之间不应有依赖）
-  - ：只读抽样，只输出**编码名与计数**，
+  - **采样**：只读抽样，只输出**编码名与计数**，
     绝不打印主题 / 正文 / 地址
 - **QQ 与沃邮箱的实测记录**（2026-10-23）：三家国内服务商的协议事实已全部落到 `docs/PROTOCOLS.md`
   - **QQ 是三家里唯一支持 IDLE 的**（✅ 服务器接受 `+ idling`），也**有 MOVE**
