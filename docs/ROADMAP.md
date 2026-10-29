@@ -57,7 +57,7 @@
   - 三家真实邮箱实测：`UID STORE` 全 OK、**回读确认生效**、重复发同一标记也回 OK（见 `docs/PROTOCOLS.md`）
   - epoch 变了 → 意图作废（`failed` / `epoch_changed`），不会把旧 UID 套到另一封信上
 - [ ] 调度器（AccountActor）：什么时候同步、同步哪些文件夹、重连退避。
-- [ ] 收发链路（P3）：SMTP 一个字没写。
+- [ ] 收发链路（P3）：SMTP **提交路径**一个字没写（只读探测已做完，见 P3 小节）。
 - [ ] 真实邮箱 **CI 验收**：现在的真实邮箱证据全部来自本机手工运行。
 
 > **仓库已推送**（2026-10-26，代码批次 `975ffda`、文档批次 `f6f7406`），CI **四个 job 全绿**
@@ -183,6 +183,18 @@
   授权码认证、发信后的 `APPEND` 行为。
   - 预认证阶段已测过 163 的 SMTP 问候与 `EHLO` 能力（无 SIZE / 无 PIPELINUX，有 8BITMIME 与 STARTTLS），
     但**没有发过一封信**
+  - [x] **只读探测阶段已实测**（2026-10-28，工具 \`xremail-smtp-probe\`，用本项目自己的 Rust 客户端）：
+    - **163** \`smtp.163.com:465\`：TLS 1.3，证书校验通过，\`AUTH LOGIN\` 认证成功（\`235\`）；
+      有 \`8BITMIME\`、**无** \`SMTPUTF8\`。
+    - **QQ** \`smtp.qq.com:465\`：TLS 1.2，证书校验通过，\`AUTH LOGIN\` 认证成功（\`235\`）；
+      有 \`8BITMIME\` / \`SMTPUTF8\` / \`PIPELINING\`，\`SIZE 73400320\`。
+    - **沃** \`smtp.wo.cn:465\`：❌ **连不上**——服务器只接受**静态 RSA** 密钥交换套件
+      （\`openssl s_client\` 协商出 \`TLS_RSA_WITH_AES_128_GCM_SHA256\` 可证），
+      而 rustls 只支持 ECDHE，**换 TLS 版本无效**。⇒ 沃的发信需要另一个 TLS 后端，
+      P3 首发只做 163 / QQ。
+    - **126**：本机凭据文件里没有 126 账号，**待用户补授权码**后再测。
+    - 原始报告见 [PROTOCOLS.md「SMTP 实测」](PROTOCOLS.md#smtp-实测2026-10-28-起)。
+  - 仍缺：**发信后的 \`APPEND\` 行为**（服务器是否存已发送副本）——必须用专用测试账户实测。
 - [ ] SMTP 提交、草稿、附件与签名；服务器已发送副本策略先实测，避免重复 APPEND。
 - [ ] envelope recipients 与显示头分离，Bcc 不泄漏且不破坏 To/Cc。
 - [ ] DATA 最终应答丢失测试与用户可见 uncertain 状态；不盲重发。

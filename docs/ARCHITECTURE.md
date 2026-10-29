@@ -17,7 +17,7 @@
 
 ## 2. 模块与依赖
 
-当前已有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync`、`xremail-protocol-imap`、`xremail-message`、`xremail-testkit`、`xremail-diagnostics` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
+当前已有 `xremail-core`、`xremail-store`、`xremail-crypto`、`xremail-api`、`xremail-sync`、`xremail-protocol-imap`、`xremail-protocol-smtp`、`xremail-message`、`xremail-testkit`、`xremail-diagnostics` 与 `apps/shell/src-tauri`；以下为目标职责，按需创建，不要求一次拆齐。
 
 | 模块 | 职责 | 边界 |
 |---|---|---|
@@ -25,7 +25,7 @@
 | xremail-api | 应用服务 DTO、L2 最小契约 | 不实现网络；不强迫其他模块反向依赖 UI |
 | xremail-store | SQLite、迁移、事务、检索投影、操作队列 | 不发网络请求 |
 | xremail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试；**不依赖 xremail-message** |
-| xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once |
+| xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once。**当前只有只读探测**（EHLO / STARTTLS / AUTH / 证书体检），提交路径未写 |
 | xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/message/core，不认识 Tauri |
 | xremail-message | MIME 结构、charset 解码、RFC 5322 头 | 不落库、不加载远程资源；**不做 HTML 清洗**（渲染层的事） |
 | xremail-provider | 可覆盖预设、接入诊断 | 企业邮箱需管理员配置，不能按品牌猜服务器 |

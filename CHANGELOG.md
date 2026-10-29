@@ -7,6 +7,32 @@
 ## [Unreleased]
 
 ### Added
+- **SMTP 只读探测**（2026-10-28）：新 crate `crates/xremail-protocol-smtp`
+  - 诊断工具 `xremail-smtp-probe`：**只实现** `EHLO` / `STARTTLS` / `AUTH` / `QUIT` 四个动词，
+    **代码里根本没有** `MAIL FROM` / `RCPT TO` / `DATA` —— 不是开关关掉，是不存在，探测阶段不可能误发邮件
+  - 输出一份 markdown 报告：TLS 版本与套件、证书体检、EHLO 扩展逐条、
+    认证机制与结果，以及可直接抄进配置的 `smtp_host` / `smtp_port` / `smtp_tls` / `smtp_auth`
+  - 口令只从 `%USERPROFILE%/.xremail/accounts.txt` 读，**不出现在命令行**；报告里账号脱敏成 `u***@example.com`
+  - TLS 1.3 被服务器拒绝时**自动改用 TLS 1.2 重试整条链路**，并在报告里写明回退——
+    证书校验**一点不放松**，降级只发生在协议版本上
+  - **实测结论**（用本项目自己的 Rust 客户端，原始报告在 [PROTOCOLS.md](docs/PROTOCOLS.md)）：
+    - 163 `smtp.163.com:465`：TLS 1.3，`AUTH LOGIN` 认证通过（`235`），支持 `8BITMIME`、无 `SMTPUTF8`
+    - QQ `smtp.qq.com:465`：TLS 1.2，`AUTH LOGIN` 认证通过（`235`），
+      支持 `8BITMIME` / `SMTPUTF8` / `PIPELINING`，`SIZE 73400320`
+    - 沃 `smtp.wo.cn:465`：❌ **连不上**——服务器只收**静态 RSA** 密钥交换套件，rustls 只支持 ECDHE，
+      换 TLS 版本无效（已用 `openssl s_client` 交叉验证）⇒ 沃的发信需要另一个 TLS 后端
+    - 126：待用户补授权码后再测
+- **前端第一套自动化测试**（2026-10-28）：`vitest` + `@testing-library/react` + `jsdom`
+  - 把上一批只做过**一次性手工验证**的交互断言**固化进仓库**（账号切换、文件夹切换、
+    邮件选中、正文渲染、已读/星标按钮的空态与错误态等）
+  - CI 的 Frontend job 现在跑 `vitest run` + `tsc --noEmit` + `vite build`
+- **故障注入与端到端同步用例**（2026-10-28）
+  - `crates/xremail-testkit`：假 IMAP/SMTP 服务器可注入故障
+    （断连、超时、慢响应、提交后丢弃应答），端到端用例覆盖
+    「提交后应答丢失 → 回读确认 → 不重复发」「瞬时故障重试成功」
+    「崩溃重启后操作队列对账恢复」
+  - **修掉一个真 bug**：`list_pending_operations` 的 SQL **漏了 `uncertain` 状态**——
+    提交结果不明的那批操作会被**静默丢弃**，永远重试不了
 - **写操作真正回写服务器**（2026-10-26）
   - 标记已读 / 未读、星标 / 取消星标不再只改本地：意图先落库（`queued`）→
     `UID STORE` 提交 → **回读 `FLAGS` 逐位确认** → 六态回报前端

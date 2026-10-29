@@ -330,7 +330,7 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 | 项 | 值 | 来源 | 状态 |
 |---|---|---|---|
 | IMAP | `imap.qq.com:993` (IMAPS) | 实测（2026-10-23） | ✅ **已实测** |
-| SMTP | `smtp.qq.com:465` (SSL) | 社区 | ⚠️ 待实测 |
+| SMTP | `smtp.qq.com:465` (SSL) | 实测（2026-10-28） | ✅ **已实测**（TLS 1.2 + `AUTH LOGIN` 认证通过；详见「SMTP 实测」小节） |
 | 认证 | 16 位**授权码** | [官方帮助](https://help.mail.qq.com/detail/106/985) | ✅ |
 | 开启方式 | 设置 → 账号与安全 → 安全设置 → 开启 POP3/IMAP/SMTP → 生成授权码 | 官方 | ✅ |
 
@@ -378,7 +378,7 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 | 项 | 值 | 来源 | 状态 |
 |---|---|---|---|
 | IMAP | `imap.wo.cn:993` | 实测（2026-10-23） | ✅ **已实测** |
-| SMTP | `smtp.wo.cn:465` | 社区 | ⚠️ 待实测 |
+| SMTP | `smtp.wo.cn:465` | 实测（2026-10-28） | ❌ **实测连不上**：服务器只接受**静态 RSA** 密钥交换套件，rustls 不支持（详见「SMTP 实测」小节） |
 | POP | `pop.wo.cn` | [应用市场说明](https://mail.wo.cn/) | ⚠️ 待实测 |
 | 认证 | **授权码**（实测：授权码可登录） | [荣耀社区回复](https://club.honor.com/cn/thread-29278971-1-1.html) | ✅ 已实测 |
 
@@ -466,6 +466,245 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 
 ---
 
+## SMTP 实测（2026-10-28 起）
+
+> P3 发信的前置。提交路径要求「命令必须自证成败」（见 [ARCHITECTURE §2.1](ARCHITECTURE.md)），
+> 所以在写 `MAIL FROM` 之前，必须先弄清每家的握手语义。
+
+### 服务器地址候选（**不按品牌推定，逐个实测**）
+
+| 服务商 | 候选地址 | 来源 | 验证状态 |
+|---|---|---|---|
+| 163 | `smtp.163.com:465`（隐式 TLS） | 官方/社区 | ✅ **已实测**（2026-10-28，本项目 Rust 客户端：TLS 1.3 + `AUTH LOGIN` 认证通过） |
+| 126 | `smtp.126.com:465` | 社区 | ⚠️ 待实测（**本机凭据文件里没有 126 账号**，需要用户补一个授权码） |
+| QQ | `smtp.qq.com:465` | 社区 | ✅ **已实测**（2026-10-28，本项目 Rust 客户端：TLS 1.2 + `AUTH LOGIN` 认证通过） |
+| 沃 | `smtp.wo.cn:465` | 社区 | ❌ **实测连不上**（2026-10-28：服务器只接受**静态 RSA** 密钥交换套件，rustls 不支持——见下面「沃」的记录） |
+| 网易企业邮 | `smtp.qiye.163.com:465` / `:994` / `:587` | 官方手册 | ⚠️ 待实测（**节点不同主机名不同，必须支持用户手填**） |
+| Exchange / 365 | `smtp.office365.com:587`（STARTTLS） | 社区 | P1 不实现，列入 P5+ |
+
+### 怎么测
+
+用 `xremail-smtp-probe`（诊断工具，只读，**不会投递任何邮件**）：
+
+```bash
+# 列出凭据文件里配好的 provider
+cargo run -p xremail-diagnostics --bin xremail-smtp-probe -- --list
+
+# 只探测不认证（不读口令、不发口令）
+cargo run -p xremail-diagnostics --bin xremail-smtp-probe -- --provider 163 --no-auth
+
+# 隐式 TLS（465）
+cargo run -p xremail-diagnostics --bin xremail-smtp-probe -- --provider 163 --host smtp.163.com --port 465
+
+# 明文 + STARTTLS（587）
+cargo run -p xremail-diagnostics --bin xremail-smtp-probe -- --provider 126 --host smtp.126.com --port 587 --tls-mode starttls
+```
+
+口令只从 `%USERPROFILE%/.xremail/accounts.txt` 读，**不出现在命令行**；报告里账号会脱敏成 `u***@example.com`。
+
+> 工具**只实现** `EHLO` / `STARTTLS` / `AUTH` / `QUIT` 四个动词，**没有任何 `MAIL FROM` / `RCPT TO` / `DATA` 代码路径**——
+> 不是靠开关关掉，是压根不存在，探测阶段不可能误发邮件。
+
+### 报告里要读什么
+
+| 报告字段 | 决定什么 |
+|---|---|
+| `## EHLO 扩展` 逐条 | `8BITMIME`（正文能否带 8 位）、`SIZE`（单封上限）、`PIPELINING`、`SMTPUTF8`（标题是否要 RFC 2047 编码） |
+| `## 认证` 的机制列表与结果 | 填 `smtp_auth`：`login` / `plain` / `xoauth2`；失败时带服务器原文（如 `535 …`） |
+| `## TLS` 段 | 填 `smtp_tls`：`implicit` / `starttls`；以及证书 CN、签发者、过期日 |
+| STARTTLS 前后两份 EHLO | 有些服务器**只在 TLS 之后**才宣告 `AUTH`——这决定认证该放在升级前还是升级后 |
+
+### 实测记录：163 / SMTP / 2026-10-28
+
+> 用的是**本项目自己的客户端**（`xremail-protocol-smtp`，rustls，强制校验系统根），
+> 不是外部工具的预探测——所以这份记录**可以直接作为 P3 发信实现的依据**。
+
+#### Xremail SMTP 探测报告
+
+- 目标       : smtp.163.com:465
+- provider   : 163
+- 账号       : x***@163.com
+- 凭据来源   : %USERPROFILE%\.xremail\accounts.txt
+- TLS 模式   : direct（隐式 TLS）
+- 信任来源   : 系统根（rustls-native-certs）
+- 客户端     : xremail-protocol-smtp（rustls，强制校验系统根）
+- TLS 版本   : 默认 1.3+1.2（服务器拒绝 ClientHello 时改用 1.2 重试，报告会写明）
+
+## TLS
+
+| 协议版本 | 加密套件 | 校验 | 证书链长度 |
+|---|---|---|---|
+| TLSv1.3 | TLS13_AES_256_GCM_SHA384 | ✅ 通过（rustls 强制校验） | 2 |
+
+| 证书主题 | 签发者 | 生效日 | 过期日 |
+|---|---|---|---|
+| *.163.com | GeoTrust G2 TLS CN RSA4096 SHA256 2022 CA1 | 2026-09-25 | 2027-04-11 |
+
+- 证书链体检：非自签；剩余 164 天；未过期
+- 主题全名：`C=CN, ST=Zhejiang, L=Hangzhou, O=NetEase (Hangzhou) Network Co., Ltd, CN=*.163.com`
+- 签发者全名：`C=US, O=DigiCert, Inc., CN=GeoTrust G2 TLS CN RSA4096 SHA256 2022 CA1`
+
+## 服务器问候与能力
+
+- 问候原文：`220 163.com Anti-spam GT for Coremail System (163com[20141201])`
+- STARTTLS：未执行（隐式 TLS，连上就是 TLS）
+
+## EHLO 扩展
+
+| 扩展（服务器原文） | 支持 | 对本项目的意义 |
+|---|---|---|
+| `AUTH LOGIN PLAIN XOAUTH2` | ✅ | 可用的认证机制 |
+| `AUTH=LOGIN PLAIN XOAUTH2` | ✅ | 可用的认证机制 |
+| `coremail 1Uxr2xKj7kG0xkI17xGrU7I0s8FY2U3Uj8Cz28x1UUUUU7Ic2I0Y2UrZvW1QUCa0xDrUUUUj` | — | （本项目暂未归类的扩展） |
+| `STARTTLS` | ✅ | 支持明文连接后升级到 TLS |
+| `ID` | — | （本项目暂未归类的扩展） |
+| `8BITMIME` | ✅ | 可发 8 位正文（`BODY=8BITMIME`） |
+
+## 认证
+
+- AUTH 机制（TLS 阶段）：LOGIN, PLAIN, XOAUTH2
+- AUTH 机制（明文阶段）：（未宣告）
+- 认证结果：✅ 成功（机制 LOGIN）—— `235 Authentication successful`
+
+## 建议配置
+
+可以直接抄进应用配置的 SMTP 参数块（取值与 xremail-core 领域模型的 serde 名一致）：
+
+```toml
+smtp_host = "smtp.163.com"
+smtp_port = 465
+smtp_tls = "implicit"
+smtp_auth = "login"
+```
+
+- `smtp_tls`：`implicit` = 隐式 TLS（465）；`starttls` = 明文 + STARTTLS（587）。
+- `smtp_auth`：`login` = `AUTH LOGIN`；`plain` = `AUTH PLAIN`；`xoauth2` = `AUTH XOAUTH2`（本工具未实现）。
+- 支持 `8BITMIME`：发信时可以声明 `BODY=8BITMIME`。
+- **不支持** `SMTPUTF8`：标题里的非 ASCII 字符要按 MIME 编码（RFC 2047）。
+
+**结论**：`smtp_tls = "implicit"`、`smtp_auth = "login"`。支持 `8BITMIME`、**不支持** `SMTPUTF8`
+（标题里的非 ASCII 字符要走 MIME / RFC 2047 编码）。
+
+---
+
+### 实测记录：QQ / SMTP / 2026-10-28
+
+#### Xremail SMTP 探测报告
+
+- 目标       : smtp.qq.com:465
+- provider   : qq
+- 账号       : 2***@qq.com
+- 凭据来源   : %USERPROFILE%\.xremail\accounts.txt
+- TLS 模式   : direct（隐式 TLS）
+- 信任来源   : 系统根（rustls-native-certs）
+- 客户端     : xremail-protocol-smtp（rustls，强制校验系统根）
+- TLS 版本   : 默认 1.3+1.2（服务器拒绝 ClientHello 时改用 1.2 重试，报告会写明）
+
+## TLS
+
+| 协议版本 | 加密套件 | 校验 | 证书链长度 |
+|---|---|---|---|
+| TLSv1.2 | TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 | ✅ 通过（rustls 强制校验） | 3 |
+
+| 证书主题 | 签发者 | 生效日 | 过期日 |
+|---|---|---|---|
+| *.mail.qq.com | DigiCert Secure Site OV G5 TLS CN RSA4096 SHA384 2022 CA1 | 2026-10-23 | 2027-05-09 |
+
+- 证书链体检：非自签；剩余 192 天；未过期
+- 主题全名：`C=CN, ST=Guangdong Province, L=Shenzhen, O=Tencent Technology (Shenzhen) Company Limited, CN=*.mail.qq.com`
+- 签发者全名：`C=US, O=DigiCert, Inc., CN=DigiCert Secure Site OV G5 TLS CN RSA4096 SHA384 2022 CA1`
+
+## 服务器问候与能力
+
+- 问候原文：`220 newxmesmtplogicsvrsza63-0.qq.com XMail Esmtp QQ Mail Server.`
+- STARTTLS：未执行（隐式 TLS，连上就是 TLS）
+
+## EHLO 扩展
+
+| 扩展（服务器原文） | 支持 | 对本项目的意义 |
+|---|---|---|
+| `PIPELINING` | ✅ | 支持命令流水线 |
+| `SIZE 73400320` | ✅ | 单封邮件大小上限（字节） |
+| `AUTH LOGIN PLAIN XOAUTH XOAUTH2` | ✅ | 可用的认证机制 |
+| `AUTH=LOGIN` | ✅ | 可用的认证机制 |
+| `MAILCOMPRESS` | — | （本项目暂未归类的扩展） |
+| `SMTPUTF8` | ✅ | 可发 UTF-8 邮箱地址与非 ASCII 标题 |
+| `8BITMIME` | ✅ | 可发 8 位正文（`BODY=8BITMIME`） |
+
+## 认证
+
+- AUTH 机制（TLS 阶段）：LOGIN, PLAIN, XOAUTH, XOAUTH2
+- AUTH 机制（明文阶段）：（未宣告）
+- 认证结果：✅ 成功（机制 LOGIN）—— `235 Authentication successful`
+
+## 建议配置
+
+可以直接抄进应用配置的 SMTP 参数块（取值与 xremail-core 领域模型的 serde 名一致）：
+
+```toml
+smtp_host = "smtp.qq.com"
+smtp_port = 465
+smtp_tls = "implicit"
+smtp_auth = "login"
+```
+
+- `smtp_tls`：`implicit` = 隐式 TLS（465）；`starttls` = 明文 + STARTTLS（587）。
+- `smtp_auth`：`login` = `AUTH LOGIN`；`plain` = `AUTH PLAIN`；`xoauth2` = `AUTH XOAUTH2`（本工具未实现）。
+- 单封邮件大小上限：`SIZE 73400320` 字节。
+- 支持 `8BITMIME`：发信时可以声明 `BODY=8BITMIME`。
+- 支持 `SMTPUTF8`：可以用 UTF-8 邮箱地址与非 ASCII 标题。
+- 支持 `PIPELINING`：可以流水线下发命令。
+
+**结论**：`smtp_tls = "implicit"`、`smtp_auth = "login"`。
+支持 `8BITMIME` / `SMTPUTF8` / `PIPELINING`，单封上限 `SIZE 73400320`（约 70MB）。
+注意：**QQ 的 SMTP 证书主题是 `*.mail.qq.com`**（SAN 里另含 `smtp.qq.com`，主机名校验通过）。
+
+---
+
+### 实测记录：沃 / SMTP / 2026-10-28 —— ❌ 连不上
+
+#### Xremail SMTP 探测报告
+
+- 目标       : smtp.wo.cn:465
+- provider   : wo
+- 账号       : 1***@wo.cn
+- 凭据来源   : %USERPROFILE%\.xremail\accounts.txt
+- TLS 模式   : direct（隐式 TLS）
+- 信任来源   : 系统根（rustls-native-certs）
+- 客户端     : xremail-protocol-smtp（rustls，强制校验系统根）
+- TLS 版本   : 默认 1.3+1.2（服务器拒绝 ClientHello 时改用 1.2 重试，报告会写明）
+
+## 结果
+
+- **失败阶段**: 服务器拒绝了 TLS 握手: received fatal alert: HandshakeFailure（已知：smtp.wo.cn 要求 ClientHello 里带静态 RSA 密钥交换套件（TLS_RSA_WITH_*），而 rustls 只支持 ECDHE；换 TLS 版本无效，需要系统原生 TLS 才能连上）
+- 可重试     : true
+- 需用户处理 : false
+
+**根因（已用 `openssl s_client` 交叉验证）**：
+
+| 客户端 | 结果 |
+|---|---|
+| `openssl s_client -connect smtp.wo.cn:465 -tls1_2` | ✅ 连上，协商出 `AES128-GCM-SHA256`，即 **`TLS_RSA_WITH_AES_128_GCM_SHA256`**（**静态 RSA** 密钥交换） |
+| 本项目（rustls）默认 1.3+1.2 | ❌ `received fatal alert: HandshakeFailure` |
+| 本项目（rustls）强制 `--tls12-only` | ❌ 同样 `HandshakeFailure` |
+
+所以问题**不是 TLS 版本**，而是**密钥交换套件**：沃的 SMTP 只接受 `TLS_RSA_WITH_*`
+这类**静态 RSA** 套件，而 **rustls 只支持 ECDHE/PSK，没有静态 RSA**。
+OpenSSL 与 Windows SChannel 都带静态 RSA 套件，所以它们能连上。
+
+**这对项目意味着什么**（必须诚实写清，别假装能连）：
+
+- 沃邮箱的 **IMAP 侧完全正常**（`imap.wo.cn:993` 已实测可读，见本文档「沃邮箱」小节）。
+- 沃邮箱的 **SMTP 侧在 rustls 上不可用**。要支持它，只有三条路：
+  1. 给 SMTP 传输层加一个**可选的系统原生 TLS 后端**（Windows SChannel / OpenSSL），
+     与 rustls 后端并存，按服务器探测结果选择；
+  2. 用 `native-tls` 单独做一个 SMTP 后端（同样支持静态 RSA）；
+  3. 放弃沃的发信能力，只保留收信。
+- 这条路**不在 P3 的首发范围**里。P3 先做 163 / QQ（两者已实测可连），
+  沃的发信单列为待办，**不要在计划里假装它能发**。
+
+---
+
 ## IDLE / CONDSTORE 支持度矩阵
 
 > 实测后填 ✅/❌/⚠️。这是同步引擎能否用实时模式的关键依据。
@@ -547,6 +786,8 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 | 连接超时 | 网络/防火墙；或服务器地址错 | 提供连接诊断，逐项测试 DNS/TCP/TLS/认证 |
 | 邮件正文乱码 | charset 处理错误 | 按上面的解码顺序；提交样本到 issue |
 | `SELECT` 报 `UIDVALIDITY changed` | 服务器重建了文件夹 | 清空该文件夹本地缓存并全量重拉（**必须实现**） |
+| SMTP `535 Authentication failed` | 授权码失效 / 误用了登录密码 | 先看报告里服务器宣告了哪些 AUTH 机制，再区分「机制不支持」与「凭证错」 |
+| SMTP 连接正常但没有 `AUTH` 宣告 | 服务器只在 TLS 之后才宣告认证能力 | 升级 TLS 后重新看 EHLO 扩展；据此决定认证放在升级前还是升级后 |
 | Gmail `NO`/`BAD` + "unauthorized" | OAuth token 过期 | 走 refresh 或重新走 Device Code 授权 |
 
 ---
