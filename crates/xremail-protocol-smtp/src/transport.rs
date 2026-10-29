@@ -298,6 +298,33 @@ impl Transport {
         }
     }
 
+    /// 写一段**原始字节**（不带行终止符）。
+    ///
+    /// `DATA` 的正文不是「一行」——它是一大段自己拼好的字节
+    /// （dot-stuffing + CRLF + 结束符），所以需要一个不经行处理的写法。
+    /// 超时语义与 [`Transport::write_line`] 一致。
+    pub(crate) async fn write_bytes(
+        &mut self,
+        timeout: Duration,
+        bytes: &[u8],
+    ) -> Result<(), SmtpError> {
+        let written = {
+            let Some(conn) = self.conn.as_mut() else {
+                return Err(SmtpError::Io("连接已关闭".into()));
+            };
+            match conn {
+                Conn::Plain(tcp) => tokio::time::timeout(timeout, tcp.write_all(bytes)).await,
+                Conn::Tls(tls) => tokio::time::timeout(timeout, tls.write_all(bytes)).await,
+            }
+        };
+
+        match written {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(SmtpError::Io(format!("写入失败: {e}"))),
+            Err(_) => Err(SmtpError::Timeout("写入超时".into())),
+        }
+    }
+
     /// 把**当前这条连接**从明文升级成 TLS（STARTTLS 之后调用）。
     pub(crate) async fn upgrade_to_tls(
         &mut self,

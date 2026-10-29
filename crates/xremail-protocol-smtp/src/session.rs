@@ -1,24 +1,32 @@
-//! SMTP 会话：EHLO / STARTTLS / AUTH / QUIT。
+//! SMTP 会话：EHLO / STARTTLS / AUTH / 投递动词 / QUIT。
 //!
-//! ## 严格只读
+//! ## 探测路径严格只读
 //!
-//! 本模块**只**实现探测所需的命令：
+//! 探测（[`crate::probe`]）只用这四个命令：
 //!
 //! * `EHLO` —— 读能力集
 //! * `STARTTLS` —— 升级到 TLS
 //! * `AUTH` —— 认证
 //! * `QUIT` —— 礼貌收尾
 //!
-//! **绝不**实现 `MAIL FROM` / `RCPT TO` / `DATA`。
+//! 探测**永远不会**发 `MAIL FROM` / `RCPT TO` / `DATA`——
+//! `MAIL FROM` 会**开启一次投递事务**，`DATA` 之后的内容就是真邮件。
+//! 探测工具一旦顺手带上投递命令，「只是跑一下探测」和「误发一封信」
+//! 之间就没有技术屏障了。邮箱协议是**共享资源**：一次误投可能真的进别人的收件箱。
 //!
-//! 为什么不做发信命令：`MAIL FROM` 会**开启一次投递事务**，
-//! `DATA` 之后的内容就是真邮件——探测工具一旦带上有投递能力的命令，
-//! 「只是跑一下探测」和「误发一封信」之间就没有技术屏障了。
-//! 邮箱协议是**共享资源**：一次误投可能真的进别人的收件箱。
-//! 所以发信能力属于**另一个模块**（发送链路），不属于探测。
+//! 投递动词（`MAIL FROM` / `RCPT TO` / `DATA`）只为**提交链路**
+//! （[`crate::submit`]）而存在，放在这里是因为它们和 `EHLO` / `AUTH`
+//! 共用同一条会话与同一套 TLS 升级逻辑。
+//!
+//! ## 为什么在这里实现 dot-stuffing
+//!
+//! RFC 5321 §4.5.2 要求：正文里以 `.` 开头的行，线上要写成 `..`——
+//! 否则服务器会把单独一行的 `.` 当成「正文结束」，信就截断了。
+//! 这是**线上格式**问题，属于会话层，不属于提交层。
 //!
 //! 顺带也不实现 `RSET`：它只影响当前会话的投递状态，
-//! 而探测根本不会开启投递状态——实现它只会平白扩大「会改动服务端状态」的表面。
+//! 而本模块的调用方要么是探测（不开启投递状态），
+//! 要么是一次性提交（会话结束即弃）——实现它只会平白扩大「会改动服务端状态」的表面。
 
 use std::time::Duration;
 
@@ -197,6 +205,53 @@ impl SmtpSession {
         self.command(&pass_b64).await
     }
 
+    /// `MAIL FROM:<sender>`：开启一次投递事务。
+    ///
+    /// `body_8bitmime` 为真时带上 `BODY=8BITMIME`（RFC 6152）。
+    ///
+    /// **只有服务器宣告了 `8BITMIME` 才能带这个参数**——服务器没宣告时
+    /// 带上它会被拒收（`501` / `555`）。带不带由调用方决定，
+    /// 但「服务器不支持就不带」这条规则由提交层把关。
+    pub async fn mail_from(
+        &mut self,
+        sender: &str,
+        body_8bitmime: bool,
+    ) -> Result<SmtpResponse, SmtpError> {
+        let mut line = format!("MAIL FROM:<{sender}>");
+        if body_8bitmime {
+            line.push_str(" BODY=8BITMIME");
+        }
+        self.command(&line).await
+    }
+
+    /// `RCPT TO:<recipient>`：添加一个信封收件人。
+    ///
+    /// 一次事务可以有多个 `RCPT TO`——每个信封收件人一条。
+    pub async fn rcpt_to(&mut self, recipient: &str) -> Result<SmtpResponse, SmtpError> {
+        self.command(&format!("RCPT TO:<{recipient}>")).await
+    }
+
+    /// `DATA`：进入数据态、写入正文、读**最终**应答。
+    ///
+    /// 返回的永远是**最终应答**：
+    ///
+    /// * 服务器没接受 `DATA`（如 `503`）→ 直接返回那个应答，**没有邮件发出去**。
+    /// * 服务器回了 `354` → 写入正文，再读最终应答（`250` / `4xx` / `5xx`）。
+    ///
+    /// 正文写入后**拿不到最终应答**时返回 `Err`——
+    /// 调用方（提交层）据此判定「不确定」：邮件可能已经被收下了。
+    pub async fn data(&mut self, message: &[u8]) -> Result<SmtpResponse, SmtpError> {
+        let response = self.command("DATA").await?;
+        if response.code != 354 {
+            // 服务器没进入数据态（缺 `MAIL FROM` / `RCPT TO` 等）。
+            return Ok(response);
+        }
+
+        let payload = encode_data_payload(message);
+        self.transport.write_bytes(self.timeout, &payload).await?;
+        self.read_response().await
+    }
+
     /// `QUIT`：礼貌收尾。
     pub async fn quit(&mut self) -> Result<SmtpResponse, SmtpError> {
         self.command("QUIT").await
@@ -254,6 +309,57 @@ impl SmtpSession {
         let text = lines.last().map(|l| response_text(l)).unwrap_or_default();
         Ok(SmtpResponse { code, lines, text })
     }
+}
+
+/// 把邮件正文编码成 `DATA` 的线上字节。
+///
+/// 两件事：
+///
+/// * **行终止符统一成 CRLF**（RFC 5321 §2.3.1）——线上就是 CRLF。
+///   输入里若是 LF（很多 MIME 生成器这样），这里统一转成 CRLF。
+/// * **dot-stuffing**（RFC 5321 §4.5.2）——正文里以 `.` 开头的行，
+///   线上写成 `..`。不转的话，单独一行的 `.` 会被服务器当成「正文结束」，
+///   邮件就截断了（而且客户端还以为发送成功）。
+///
+/// 末尾补上**单独一行的 `.`** 作为正文结束符。
+fn encode_data_payload(message: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(message.len() + 64);
+
+    let push_line = |out: &mut Vec<u8>, line: &[u8]| {
+        // 以 `.` 开头的行要加点（dot-stuffing）。
+        if line.first() == Some(&b'.') {
+            out.push(b'.');
+        }
+        out.extend_from_slice(line);
+        out.extend_from_slice(b"\r\n");
+    };
+
+    let mut line_start = 0;
+    for index in 0..message.len() {
+        if message[index] != b'\n' {
+            continue;
+        }
+        let mut end = index;
+        // 行尾的 CR 不算内容（否则会变成 CRCRLF）。
+        if end > line_start && message[end - 1] == b'\r' {
+            end -= 1;
+        }
+        push_line(&mut out, &message[line_start..end]);
+        line_start = index + 1;
+    }
+
+    // 最后一行：末尾可能没有换行符。
+    if line_start < message.len() {
+        let mut end = message.len();
+        if end > line_start && message[end - 1] == b'\r' {
+            end -= 1;
+        }
+        push_line(&mut out, &message[line_start..end]);
+    }
+
+    // 正文结束符：单独一行的 `.`（RFC 5321 §4.1.1.4）。
+    out.extend_from_slice(b".\r\n");
+    out
 }
 
 /// 去掉 `250-` / `250 ` 前缀，取正文。

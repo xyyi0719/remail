@@ -2,7 +2,7 @@
 //!
 //! 职责边界（见 [ARCHITECTURE §2](../../../docs/ARCHITECTURE.md)）：
 //! * SMTP 会话能力（EHLO 扩展、STARTTLS、AUTH）。
-//! * **不发信**：本 crate 只实现「只读探测」所需的命令。
+//! * **只读探测**（[`probe`]）与**真发信**（[`submit`]）两条路径。
 //! * 不写库、**不决定重试**（那是 `xremail-sync` 的事）。
 //! * 不认识 Tauri，也不认识 UI。
 //!
@@ -27,6 +27,7 @@
 pub mod error;
 pub mod probe;
 pub mod session;
+pub mod submit;
 pub mod transport;
 
 pub use error::SmtpError;
@@ -35,4 +36,5 @@ pub use probe::{
     auth_mechanisms, extension_support, parse_extensions, probe, probe_with_trust,
 };
 pub use session::{AuthMechanism, SmtpResponse, SmtpSession};
+pub use submit::{Envelope, SubmitOutcome, SubmitRequest, SubmitStage, submit_message};
 pub use transport::{CertificateInfo, SmtpConfig, TlsInfo, TlsMode, TlsTrust, TlsVersions};
