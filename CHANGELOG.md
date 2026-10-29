@@ -7,6 +7,14 @@
 ## [Unreleased]
 
 ### Added
+- **真实发信往返验收**（`apps/shell/src-tauri/tests/real_mail_roundtrip.rs`）：
+  用**真实的 163 / QQ 账户双向真发信**（163 → QQ、QQ → 163），
+  逐项核对：提交结果、对方收件箱里的投递、**正文里的标记**、以及
+  「服务器会不会自己存副本到已发送」。
+  **默认跳过**，需 `XREMAIL_REAL_ACCOUNTS=1` 才允许动真邮箱；
+  凭据从 `~/.xremail/accounts.txt` 读，**不入库**（文件在仓库外）。
+  验收脚本**不用 `SEARCH`**（见下），而是像同步引擎那样用
+  `UID FETCH <UID 区间>` 拉回全部头自己找标记。
 - **发信链路（P3）**：从「能读」到「能发」
   - **MIME 构建**（`crates/xremail-message::compose`）：按 RFC 5322 组装邮件；
     主题 / 发件人按 RFC 2047 编码，附件 base64，正文 quoted-printable
@@ -108,6 +116,11 @@
   用于测非 UTF-8 编码（GBK 正文）
 
 ### Fixed
+- **163 的 IMAP `SEARCH` 只支持 `ALL`**（实测 2026-10-29）：
+  `SUBJECT` / `HEADER` / `TEXT` 等条件**静默返回空结果**，连 `NO` 都不回——
+  看起来像「没搜到」，实际是「这个服务器不支持这种搜法」（QQ 上正常）。
+  同步引擎**不受影响**（它走 `UID FETCH`，从不用 `SEARCH`），
+  但这意味着**服务器端搜索功能在 163 上会静默失效**（新增 R23）。
 - **文档里的相对链接断了 3 处**（`scripts/check_doc_links.py` 逮到）：
   `cmd.rs` 与 `service/compose.rs` 里的 `docs/ARCHITECTURE.md` 层级写错，
   `xremail-protocol-smtp/tests/submit_against_fake.rs` 指向了不存在的
