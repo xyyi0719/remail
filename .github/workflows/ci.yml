@@ -107,6 +107,11 @@ jobs:
       - name: Type check
         run: npm run typecheck --prefix apps/shell
 
+      - name: Unit tests
+        # 前端交互行为（星标回写、凭据清理、状态保持）靠这里把关：
+        # typecheck 与 build 都发现不了「点了没反应」这类回归。
+        run: npm run test --prefix apps/shell
+
       - name: Build
         run: npm run build --prefix apps/shell
 

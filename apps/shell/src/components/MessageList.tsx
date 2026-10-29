@@ -62,6 +62,7 @@ function MessageList({
                     : "message-item"
                 }
                 onClick={() => onSelect(message)}
+                data-testid="message-item"
               >
                 <span
                   className={

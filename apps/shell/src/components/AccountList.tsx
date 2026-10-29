@@ -60,7 +60,7 @@ function AccountList({
       <h2 className="panel-title">账户（{accounts.length}）</h2>
       <ul className="account-list">
         {accounts.map((account) => (
-          <li key={account.id} className="account-item">
+          <li key={account.id} className="account-item" data-testid="account-item">
             <div className="account-main">
               <button
                 type="button"

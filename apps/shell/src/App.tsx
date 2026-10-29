@@ -201,7 +201,10 @@ function App() {
   );
 
   const handleToggleSeen = useCallback(
-    (target: Message) => handleSetFlag(target, "seen", !isUnread(target)),
+    // `value = true` 的含义是「加上 IMAP 的 \Seen 位」＝标记已读，
+    // 所以当前**未读**时传 true、已读时传 false。
+    // （传反了会变成永远不生效的空操作：未读时去清一个本来就没置的位。）
+    (target: Message) => handleSetFlag(target, "seen", isUnread(target)),
     [handleSetFlag],
   );
 
@@ -224,10 +227,18 @@ function App() {
         )}
       </header>
 
-      {error && <p className="app-error">操作失败：{error}</p>}
+      {error && (
+        <p className="app-error" data-testid="app-error">
+          操作失败：{error}
+        </p>
+      )}
 
       {notice && (
-        <div className={`app-notice app-notice-${notice.kind}`} role="status">
+        <div
+          className={`app-notice app-notice-${notice.kind}`}
+          role="status"
+          data-testid="app-notice"
+        >
           <span>{notice.text}</span>
           <button
             type="button"
