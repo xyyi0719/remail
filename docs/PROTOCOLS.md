@@ -300,9 +300,13 @@ X-CM-EXT-1  XAPPLEPUSHSERVICE  XLIST
 
 | 项 | 值 | 状态 |
 |---|---|---|
-| IMAP | `imap.126.com:993` | ⚠️ 待实测 |
-| SMTP | `smtp.126.com:465` | ⚠️ 待实测 |
+| IMAP | `imap.126.com:993` | ⚠️ 待实测（**本机凭据文件里没有 126 账号**，需用户补一个授权码） |
+| SMTP | `smtp.126.com:465` | ⚠️ 待实测（同上：缺 126 账号） |
 | 认证 | 授权码（同 163 流程） | ✅ |
+
+**待办**：126 的读写两侧都还没实测——**不是忘了，是没有可用的 126 账号**。
+补上授权码后，用 `xremail-smtp-probe --provider 126` 走一遍 SMTP，
+再用 `xremail-sync-smoke` 走一遍 IMAP，然后把两份结果贴回本表。
 
 ---
 
