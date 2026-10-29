@@ -1,0 +1,30 @@
+[package]
+name = "xremail-protocol-smtp"
+description = "Xremail SMTP protocol layer: EHLO capabilities, STARTTLS and authentication."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# AUTH PLAIN / AUTH LOGIN 的 base64 载荷。
+base64 = { workspace = true }
+
+# TLS：强制校验，不降级（SECURITY §2.2）。与 xremail-protocol-imap 同一套选型，
+# 便于对比「IMAP 隐式 TLS」与「SMTP STARTTLS」两条路径。
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+# 证书链体检（主题 / 签发者 / 过期日）：探测报告要回答「这个服务器给的是什么证」。
+x509-parser = "0.16"
+
+tokio = { workspace = true }
+
+[dev-dependencies]
+# 端到端测试用假 SMTP 服务器（见 crates/xremail-testkit/src/smtp.rs）。
+xremail-testkit = { path = "../xremail-testkit" }
+tokio = { workspace = true }

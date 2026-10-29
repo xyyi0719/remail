@@ -32,6 +32,7 @@ pub mod parser;
 pub mod search;
 pub mod sequence;
 pub mod server;
+pub mod smtp;
 
 pub use certificate::{CertError, ServerCertificate};
 pub use config::{Fault, MailboxFixture, MessageFixture, ServerConfig};
@@ -40,3 +41,4 @@ pub use parser::Command;
 pub use search::SearchKey;
 pub use sequence::SequenceSet;
 pub use server::{FakeImapServer, ServerError};
+pub use smtp::{FakeSmtpServer, SmtpServerConfig, SmtpServerError};

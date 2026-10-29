@@ -336,12 +336,105 @@ pub enum Fault {
     ///
     /// 模拟「服务器收了命令却没执行」——客户端只有**回读确认**
     /// 才能发现（见 ARCHITECTURE §6）。
+    ///
+    /// ## 为什么没有 `IgnoreAppend` / `IgnoreExpunge`
+    ///
+    /// 这两个对应形态**暂时不加**：产品侧还没有 `APPEND` / `EXPUNGE`
+    /// 的代码路径（`xremail-sync` 目前只实现了 flag 回写，见
+    /// ARCHITECTURE §5 的实现落点），加了就是没人用的死代码。
+    /// 等真支持了再补——那时它们才有意义。
     IgnoreStore,
     /// 收到某条命令后**直接断开连接**（不回任何响应）。
     ///
     /// 模拟「命令发出去了，但没收到服务器的确认」——
     /// 客户端**不知道**服务器到底执行了没（见 ARCHITECTURE §5）。
     DropOn(String),
+    /// 收到某条命令后**延迟 N 毫秒**才回。
+    ///
+    /// 模拟「服务器还在处理 / 网络很慢」——用来逼出客户端的
+    /// 超时与重试逻辑（见 ARCHITECTURE §4.2 对超时的要求）。
+    ///
+    /// 命令名大写匹配，如 `"SELECT"`；`UID FETCH` 这类要写子命令名
+    /// `"FETCH"`（与 [`Fault::DropOn`] 的匹配规则一致）。
+    SlowResponse {
+        /// 命令名。
+        command: String,
+        /// 延迟多少毫秒才回。
+        delay_ms: u64,
+    },
+    /// FETCH 返回的**整封正文**被**截断**（只发前 `bytes` 个字节）。
+    ///
+    /// 模拟「收到一半就断了」：客户端拿到的字面量长度对不上，
+    /// 必须当作失败处理，**不能**把半截正文写进库
+    /// （见 ARCHITECTURE §4.2 的同步事务）。
+    ///
+    /// 只截断**整封正文**（`BODY[]`）；头很小，截断它只会挡住
+    /// 「先同步元数据、再按需拉正文」这条正常链路。
+    ///
+    /// `once = true` 时只截断第一次，之后恢复正常——用来测「失败后重试」。
+    TruncateFetch {
+        /// 只发前多少个字节。
+        bytes: usize,
+        /// 是否只截断第一次。
+        once: bool,
+    },
+    /// 登录成功后，收到匹配的第一条命令就**断开连接**（不回响应）。
+    ///
+    /// 模拟「认证后才失效」：token 过期、服务商在认证通过后
+    /// 立刻把会话掐掉。比 [`Fault::DropAfterLogin`] 更贴近现实——
+    /// 它掐在**业务命令**上，而不是紧跟在 `LOGIN` 后面。
+    DropAfterLoginOn {
+        /// 命令名。
+        command: String,
+    },
+    /// 只在**第一次**遇到某条命令时断开连接（之后恢复正常）。
+    ///
+    /// 模拟「抖了一下」的网络故障：用来测「断线后重连能不能续上」
+    /// （见 ARCHITECTURE §5 的恢复要求）。
+    DropOnOnce {
+        /// 命令名。
+        command: String,
+    },
+    /// 只在**第一次** `STORE` 时「回 OK 但不真的改」（之后恢复正常）。
+    ///
+    /// 模拟「服务器收了命令却没执行」但**只发生了一次**：
+    /// 用来测「回读发现没生效 → 重新入队 → 重放成功」
+    /// （见 ARCHITECTURE §6）。
+    IgnoreStoreOnce,
+    /// 收到某条命令后**执行**它，但**不回响应**（连接被掐断）。
+    ///
+    /// 模拟「服务器执行了，确认丢了」——这是 ARCHITECTURE §5
+    /// 「命令发出去了但没收到确认」的**服务器侧孪生**：
+    /// 效果已经在服务器上了，只是确认没送回来，
+    /// 客户端**不知道**服务器执行了没，只能靠**回读**收敛
+    /// （见 ARCHITECTURE §5 / §6）。
+    ///
+    /// 与 [`Fault::DropOn`] 的区别：`DropOn` 是**执行前**断线
+    /// （命令根本没生效），这个是**执行后**断线。
+    /// 只有后者能验证「重放不产生重复副作用」——
+    /// 客户端必须先回读，确认意图已生效，才不再发第二条 `STORE`。
+    DropAfterApply {
+        /// 命令名。
+        command: String,
+        /// 是否只发生一次（之后恢复正常）。
+        once: bool,
+    },
+    /// 收到**命令原文里包含某段文本**的命令后直接断开连接。
+    ///
+    /// 模拟「同步进行到一半，连接断了」——而且能精确命中**某一条**命令：
+    /// `UID FETCH 1:* (UID)`（取远端 UID 集合）与
+    /// `UID FETCH <uid> (UID FLAGS ... BODY.PEEK[HEADER])`（批量拉元数据）
+    /// **都叫 `FETCH`**，按命令名匹配分不开。
+    ///
+    /// 文本比对**大小写不敏感**。`once = true` 时只断第一次
+    /// （之后恢复正常），用来测「重连后能不能续上」
+    /// （见 ARCHITECTURE §5 的恢复要求）。
+    DropOnContains {
+        /// 命令原文里要包含的片段。
+        text: String,
+        /// 是否只断第一次。
+        once: bool,
+    },
 }
 
 /// 假服务器的配置。
@@ -430,8 +523,21 @@ impl ServerConfig {
             Fault::HangOn(cmd) | Fault::Reject(cmd) | Fault::DropOn(cmd) => {
                 cmd.eq_ignore_ascii_case(&upper)
             }
+            Fault::SlowResponse { command, .. }
+            | Fault::DropAfterLoginOn { command }
+            | Fault::DropOnOnce { command }
+            | Fault::DropAfterApply { command, .. } => command.eq_ignore_ascii_case(&upper),
             _ => false,
         })
+    }
+
+    /// 找出**符合条件**的第一条故障。
+    ///
+    /// 与 [`Self::fault_for`] 的区别：后者只认「第一条命令名相同的故障」，
+    /// 而**不同种类**的故障可能同时挂在同一条命令上（例如既慢又断）。
+    /// 这时要按种类分别取，用本方法。
+    pub fn find_fault(&self, predicate: impl Fn(&Fault) -> bool) -> Option<&Fault> {
+        self.faults.iter().find(|fault| predicate(fault))
     }
 }
 
@@ -537,5 +643,48 @@ mod tests {
 
         assert!(config.has_capability("imap4rev1"));
         assert!(!config.has_capability("CONDSTORE"));
+    }
+
+    #[test]
+    fn fault_lookup_matches_command_names() {
+        let mut config = ServerConfig::default();
+        config.faults.push(Fault::SlowResponse {
+            command: "FETCH".to_string(),
+            delay_ms: 500,
+        });
+        config.faults.push(Fault::DropOnOnce {
+            command: "STORE".to_string(),
+        });
+
+        assert!(matches!(
+            config.fault_for("FETCH"),
+            Some(Fault::SlowResponse { delay_ms: 500, .. })
+        ));
+        assert!(matches!(
+            config.fault_for("fetch"),
+            Some(Fault::SlowResponse { .. })
+        ));
+        assert!(matches!(
+            config.fault_for("STORE"),
+            Some(Fault::DropOnOnce { .. })
+        ));
+        assert!(config.fault_for("SEARCH").is_none());
+    }
+
+    #[test]
+    fn drop_on_contains_is_not_matched_by_name() {
+        // `DropOnContains` 按**命令原文**匹配，不能被 `fault_for` 当成命令名命中。
+        let mut config = ServerConfig::default();
+        config.faults.push(Fault::DropOnContains {
+            text: "BODY.PEEK[HEADER]".to_string(),
+            once: true,
+        });
+
+        assert!(config.fault_for("FETCH").is_none());
+        assert!(
+            config
+                .find_fault(|f| matches!(f, Fault::DropOnContains { .. }))
+                .is_some()
+        );
     }
 }

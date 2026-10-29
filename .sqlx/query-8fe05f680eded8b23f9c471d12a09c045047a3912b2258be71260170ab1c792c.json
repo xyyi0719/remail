@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n        SELECT id, account_id, folder_id, uid, uidvalidity,\n               kind, intent, state, seq, base_version,\n               attempts, error_kind, error_message, created_at, updated_at\n        FROM mail_operation\n        WHERE account_id = ?\n          AND state IN ('queued', 'running', 'retryable')\n        ORDER BY seq ASC\n        ",
+  "query": "\n        SELECT id, account_id, folder_id, uid, uidvalidity,\n               kind, intent, state, seq, base_version,\n               attempts, error_kind, error_message, created_at, updated_at\n        FROM mail_operation\n        WHERE account_id = ?\n          AND state IN ('queued', 'running', 'retryable', 'uncertain')\n        ORDER BY seq ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -190,5 +190,5 @@
       false
     ]
   },
-  "hash": "7ecc07da47dead4f3627937dbbb7fef46ab9aadd7567a3f0dfc5fce1b789f472"
+  "hash": "8fe05f680eded8b23f9c471d12a09c045047a3912b2258be71260170ab1c792c"
 }

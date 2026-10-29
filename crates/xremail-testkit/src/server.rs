@@ -68,6 +68,8 @@ pub struct FakeImapServer {
     certificate: Arc<ServerCertificate>,
     shutdown: tokio::sync::oneshot::Sender<()>,
     handle: tokio::task::JoinHandle<()>,
+    /// 已收到的命令（按到达顺序）。
+    log: Arc<Mutex<Vec<String>>>,
 }
 
 impl FakeImapServer {
@@ -98,11 +100,17 @@ impl FakeImapServer {
         let config = Arc::new(config);
         // 邮箱的**活的状态**：配置里的内容是初始值，复制一份出来给连接用。
         let mailboxes = Arc::new(Mutex::new(config.mailboxes.clone()));
+        // 命令日志与一次性故障的状态：**整个服务器共享**（不是每个连接一份）。
+        let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let faults: Arc<Mutex<FaultState>> = Arc::new(Mutex::new(FaultState::default()));
 
-        let handle = tokio::spawn(async move {
-            tokio::select! {
-                _ = shutdown_rx => {}
-                _ = accept_loop(listener, acceptor, config, mailboxes) => {}
+        let handle = tokio::spawn({
+            let log = log.clone();
+            async move {
+                tokio::select! {
+                    _ = shutdown_rx => {}
+                    _ = accept_loop(listener, acceptor, config, mailboxes, log, faults) => {}
+                }
             }
         });
 
@@ -111,6 +119,7 @@ impl FakeImapServer {
             certificate,
             shutdown: shutdown_tx,
             handle,
+            log,
         })
     }
 
@@ -156,6 +165,36 @@ impl FakeImapServer {
         let _ = self.shutdown.send(());
         let _ = self.handle.await;
     }
+
+    /// 已收到的命令（按到达顺序，**不含** tag）。
+    ///
+    /// 用途：断言「客户端到底让服务器做了什么」——
+    /// 比如「重连后没有重复请求已经拉过的邮件」「标记只被写了一次」。
+    pub fn command_log(&self) -> Vec<String> {
+        let guard = self
+            .log
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone()
+    }
+}
+
+/// 故障状态：记录「一次性」故障触发过没有。
+///
+/// 一次性故障（`DropOnOnce` / `TruncateFetch { once: true }` / `IgnoreStoreOnce`）
+/// 必须在**整个服务器**的范围内只触发一次——不是每个连接一次：
+/// 「抖了一下」的意思是网络恢复之后就不再抖了。
+#[derive(Debug, Default)]
+struct FaultState {
+    /// 已触发过的故障（键是故障的标识）。
+    fired: std::collections::HashSet<String>,
+}
+
+impl FaultState {
+    /// 认领一次性故障：第一次返回 `true`，之后返回 `false`。
+    fn claim_once(&mut self, key: &str) -> bool {
+        self.fired.insert(key.to_string())
+    }
 }
 
 /// 接受连接循环。
@@ -164,6 +203,8 @@ async fn accept_loop(
     acceptor: TlsAcceptor,
     config: Arc<ServerConfig>,
     mailboxes: Arc<Mutex<Vec<MailboxFixture>>>,
+    log: Arc<Mutex<Vec<String>>>,
+    faults: Arc<Mutex<FaultState>>,
 ) {
     loop {
         let Ok((stream, _peer)) = listener.accept().await else {
@@ -172,8 +213,10 @@ async fn accept_loop(
         let config = config.clone();
         let acceptor = acceptor.clone();
         let mailboxes = mailboxes.clone();
+        let log = log.clone();
+        let faults = faults.clone();
         tokio::spawn(async move {
-            let _ = handle_connection(stream, acceptor, config, mailboxes).await;
+            let _ = handle_connection(stream, acceptor, config, mailboxes, log, faults).await;
         });
     }
 }
@@ -184,6 +227,8 @@ async fn handle_connection(
     acceptor: TlsAcceptor,
     config: Arc<ServerConfig>,
     mailboxes: Arc<Mutex<Vec<MailboxFixture>>>,
+    log: Arc<Mutex<Vec<String>>>,
+    faults: Arc<Mutex<FaultState>>,
 ) -> std::io::Result<()> {
     let _ = stream.set_nodelay(true);
     let tls_stream = match acceptor.accept(stream).await {
@@ -215,43 +260,56 @@ async fn handle_connection(
             continue;
         };
 
-        // 故障注入：挂起（不响应）→ 客户端应当超时。
-        if let Some(Fault::HangOn(_)) = config.fault_for(&command.name) {
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-            break;
+        // 命令日志（**不含** tag）：用来断言「客户端到底让服务器做了什么」。
+        {
+            let mut guard = log.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.push(command_line(&command));
         }
 
-        // 故障注入：拒绝。
-        //
-        // `UID FETCH` 这类命令的**命令名**是 `UID`，子命令才是 `FETCH`。
-        // 两种写法都要能匹配上，否则 `Fault::Reject("FETCH")` 拦不住 `UID FETCH`。
-        if let Some(Fault::Reject(_)) = config.fault_for(&command.name) {
-            reply!(write_half, "{} NO [SERVERBUG] injected fault", command.tag);
-            continue;
-        }
-        if let Some((sub, _)) = command.uid_subcommand() {
-            if let Some(Fault::Reject(_)) = config.fault_for(&sub) {
-                reply!(write_half, "{} NO [SERVERBUG] injected fault", command.tag);
-                continue;
-            }
-            if let Some(Fault::HangOn(_)) = config.fault_for(&sub) {
+        // 故障注入。
+        let action = {
+            let mut guard = faults
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            command_fault(&config, &mut guard, &command, state.authenticated)
+        };
+        match action {
+            FaultAction::Hang => {
+                // 不响应：客户端应当超时。
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                 break;
             }
-            // 直接断开：客户端不知道服务器执行了没。
-            if let Some(Fault::DropOn(_)) = config.fault_for(&sub) {
+            FaultAction::Reject => {
+                reply!(write_half, "{} NO [SERVERBUG] injected fault", command.tag);
+                continue;
+            }
+            FaultAction::Drop => {
+                // 直接断开：客户端**不知道**服务器执行了没。
                 break;
             }
-        }
-
-        // 故障注入：直接断开连接。
-        if let Some(Fault::DropOn(_)) = config.fault_for(&command.name) {
-            break;
+            FaultAction::DropAfterApply => {
+                // 执行命令（效果落到服务器上），但**把响应丢掉**再断线。
+                // 客户端收到的是「发出去就没了」，只能靠回读收敛。
+                let mut discard = tokio::io::sink();
+                let ctx = ServerCtx {
+                    config: &config,
+                    mailboxes: &mailboxes,
+                    faults: &faults,
+                };
+                let _ = handle_command(&mut discard, &ctx, &mut state, &command).await;
+                break;
+            }
+            FaultAction::Delay(ms) => {
+                // 慢：命令收到后过一会儿才回。
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            }
+            FaultAction::None => {}
         }
 
         let ctx = ServerCtx {
             config: &config,
             mailboxes: &mailboxes,
+            faults: &faults,
         };
         match handle_command(&mut write_half, &ctx, &mut state, &command).await {
             Ok(Continue::Continue) => {}
@@ -284,6 +342,158 @@ struct ServerCtx<'a> {
     config: &'a ServerConfig,
     /// 共享的邮箱状态。
     mailboxes: &'a Mutex<Vec<MailboxFixture>>,
+    /// 共享的故障状态（一次性故障记账）。
+    faults: &'a Mutex<FaultState>,
+}
+
+impl ServerCtx<'_> {
+    /// 当前生效的「整封正文截断」故障（截到多少字节）。
+    ///
+    /// 一次性故障的记账必须发生在这里——**只在真的要截断整封正文时**才算数。
+    /// 否则一次普通 FETCH（拉头，`BODY[HEADER]`）就会把这次故障「用掉」，
+    /// 真正拉正文时反而不截断了。
+    fn truncate_body_bytes(&self) -> Option<usize> {
+        let fault = self
+            .config
+            .find_fault(|f| matches!(f, Fault::TruncateFetch { .. }))?;
+        let Fault::TruncateFetch { bytes, once } = fault else {
+            return None;
+        };
+        let (bytes, once) = (*bytes, *once);
+
+        if !once {
+            return Some(bytes);
+        }
+        let mut guard = self
+            .faults
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.claim_once("truncate-fetch").then_some(bytes)
+    }
+
+    /// `STORE` 是不是「回 OK 但不真的改」。
+    fn ignore_store(&self) -> bool {
+        if self.config.has_fault(&Fault::IgnoreStore) {
+            return true;
+        }
+        let has_once = self
+            .config
+            .find_fault(|f| matches!(f, Fault::IgnoreStoreOnce))
+            .is_some();
+        if !has_once {
+            return false;
+        }
+        let mut guard = self
+            .faults
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.claim_once("ignore-store")
+    }
+}
+
+/// 一条命令在日志里的样子（**不含** tag）。
+fn command_line(command: &Command) -> String {
+    if command.args.is_empty() {
+        command.name.clone()
+    } else {
+        format!("{} {}", command.name, command.args)
+    }
+}
+
+/// 命令命中的故障动作。
+enum FaultAction {
+    /// 正常处理。
+    None,
+    /// 不响应（客户端应当超时）。
+    Hang,
+    /// 回 `NO`。
+    Reject,
+    /// 直接断开连接（客户端**不知道**服务器执行了没）。
+    Drop,
+    /// **执行**命令但不回响应（效果生效了，确认丢了）。
+    ///
+    /// 与 [`FaultAction::Drop`] 的区别：`Drop` 是执行**前**断线，
+    /// 命令根本没生效；这个是执行**后**断线。
+    /// 只有后者能验证「重放不产生重复副作用」——客户端必须先回读，
+    /// 确认意图已生效，才不再发第二条 `STORE`。
+    DropAfterApply,
+    /// 延迟这么久再处理。
+    Delay(u64),
+}
+
+/// 判定一条命令要触发哪个故障。
+///
+/// 匹配规则：
+/// * **按命令名**：`UID FETCH` 要写子命令名 `FETCH`
+///   （否则 `Fault::Reject("FETCH")` 拦不住 `UID FETCH`）；
+/// * **按命令原文**：[`Fault::DropOnContains`] 才能区分两条都叫 `FETCH`
+///   的命令（取 UID 集合 vs 批量拉元数据）。
+///
+/// `once` 类故障用 [`FaultState`] 记账：**整个服务器**只触发一次。
+fn command_fault(
+    config: &ServerConfig,
+    faults: &mut FaultState,
+    command: &Command,
+    authenticated: bool,
+) -> FaultAction {
+    // 按原文匹配的故障最具体，先判。
+    if let Some(Fault::DropOnContains { text, once }) =
+        config.find_fault(|f| matches!(f, Fault::DropOnContains { .. }))
+    {
+        let hit = command_line(command)
+            .to_ascii_uppercase()
+            .contains(&text.to_ascii_uppercase());
+        if hit && (!*once || faults.claim_once("drop-on-contains")) {
+            return FaultAction::Drop;
+        }
+    }
+
+    // 按命令名匹配：命令名本身 + `UID` 的子命令名。
+    let mut names = vec![command.name.clone()];
+    if let Some((sub, _)) = command.uid_subcommand() {
+        names.push(sub);
+    }
+
+    for fault in &config.faults {
+        let name_match = match fault {
+            Fault::HangOn(command)
+            | Fault::Reject(command)
+            | Fault::DropOn(command)
+            | Fault::DropOnOnce { command }
+            | Fault::SlowResponse { command, .. }
+            | Fault::DropAfterLoginOn { command }
+            | Fault::DropAfterApply { command, .. } => {
+                names.iter().any(|name| name.eq_ignore_ascii_case(command))
+            }
+            _ => false,
+        };
+        if !name_match {
+            continue;
+        }
+
+        match fault {
+            Fault::HangOn(_) => return FaultAction::Hang,
+            Fault::Reject(_) => return FaultAction::Reject,
+            Fault::DropOn(_) => return FaultAction::Drop,
+            Fault::DropOnOnce { command } => {
+                if faults.claim_once(&format!("drop-once:{command}")) {
+                    return FaultAction::Drop;
+                }
+            }
+            Fault::SlowResponse { delay_ms, .. } => return FaultAction::Delay(*delay_ms),
+            // 只在**认证之后**才掐：登录之前它没有意义。
+            Fault::DropAfterLoginOn { .. } if authenticated => return FaultAction::Drop,
+            // 「执行了，确认丢了」：服务器这边效果生效，确认没送回来。
+            Fault::DropAfterApply { command, once }
+                if !*once || faults.claim_once(&format!("drop-after-apply:{command}")) =>
+            {
+                return FaultAction::DropAfterApply;
+            }
+            _ => {}
+        }
+    }
+
+    FaultAction::None
 }
 
 /// 命令处理结果。
@@ -497,7 +707,7 @@ where
         }
 
         "FETCH" => {
-            handle_fetch(&mut writer, ctx, state, &command.tag, &command.args, false).await?;
+            return handle_fetch(&mut writer, ctx, state, &command.tag, &command.args, false).await;
         }
 
         "SEARCH" => {
@@ -525,7 +735,7 @@ where
             };
             match sub.as_str() {
                 "FETCH" => {
-                    handle_fetch(&mut writer, ctx, state, &command.tag, rest, true).await?;
+                    return handle_fetch(&mut writer, ctx, state, &command.tag, rest, true).await;
                 }
                 "SEARCH" => {
                     handle_search(&mut writer, ctx, state, &command.tag, rest, true).await?;
@@ -579,7 +789,7 @@ async fn handle_fetch<W>(
     tag: &str,
     args: &str,
     by_uid: bool,
-) -> std::io::Result<()>
+) -> std::io::Result<Continue>
 where
     W: AsyncWrite + Unpin,
 {
@@ -588,21 +798,21 @@ where
     // IMAP 状态机：必须先选中一个文件夹。
     let Some(index) = state.selected else {
         reply!(writer, "{tag} NO FETCH State error");
-        return Ok(());
+        return Ok(Continue::Continue);
     };
 
     let (set_text, items) = match parse_fetch(args) {
         Ok(parsed) => parsed,
         Err(err) => {
             reply!(writer, "{tag} BAD {err}");
-            return Ok(());
+            return Ok(Continue::Continue);
         }
     };
     let set = match SequenceSet::parse(&set_text) {
         Ok(set) => set,
         Err(err) => {
             reply!(writer, "{tag} BAD {err}");
-            return Ok(());
+            return Ok(Continue::Continue);
         }
     };
 
@@ -646,22 +856,38 @@ where
 
     let Some(responses) = prepared else {
         reply!(writer, "{tag} NO Mailbox does not exist");
-        return Ok(());
+        return Ok(Continue::Continue);
     };
 
     for response in responses {
-        write_fetch_response(&mut writer, &response).await?;
+        // 只截断**整封正文**（`BODY[]`）；头不截——截了头会挡住
+        // 「先同步元数据、再按需拉正文」这条正常链路。
+        let cut = match &response.literal {
+            Some((section, _)) if section == "BODY[]" => ctx.truncate_body_bytes(),
+            _ => None,
+        };
+
+        write_fetch_response(&mut writer, &response, cut).await?;
+
+        if cut.is_some() {
+            // 收到一半就断了：连接直接关掉，客户端会发现字面量对不上。
+            return Ok(Continue::Close);
+        }
     }
     reply!(writer, "{tag} OK FETCH completed");
-    Ok(())
+    Ok(Continue::Continue)
 }
 
 /// 写一条 FETCH 响应。
 ///
 /// 有字面量时格式是 `* 1 FETCH (UID 1 BODY[HEADER] {23}\r\n<23 字节>)`。
+///
+/// `truncate` 非空时模拟「收到一半就断了」：**长度照报，实际只发前 N 字节**，
+/// 剩下的不补——客户端读不满声明的长度就会报错。
 async fn write_fetch_response<W>(
     writer: &mut W,
     response: &crate::fetch::FetchResponse,
+    truncate: Option<usize>,
 ) -> std::io::Result<()>
 where
     W: AsyncWrite + Unpin,
@@ -682,9 +908,20 @@ where
                 )
             };
             write_line(writer, &prefix).await?;
-            writer.write_all(bytes).await?;
-            writer.write_all(b")\r\n").await?;
-            writer.flush().await
+            match truncate {
+                // 截断：**不写**收尾的 `)`——连接马上就会断，
+                // 客户端必然发现字面量不完整。
+                Some(limit) => {
+                    let cut = limit.min(bytes.len());
+                    writer.write_all(&bytes[..cut]).await?;
+                    writer.flush().await
+                }
+                None => {
+                    writer.write_all(bytes).await?;
+                    writer.write_all(b")\r\n").await?;
+                    writer.flush().await
+                }
+            }
         }
         None => {
             write_line(
@@ -820,6 +1057,11 @@ where
         }
     };
 
+    // 「听话的假服务器」：回 OK 但**不真的改**。
+    // 客户端只有**回读确认**才能发现（见 ARCHITECTURE §6）。
+    // 先算好，免得在邮箱锁里再拿一次故障锁。
+    let ignore_store = ctx.ignore_store();
+
     // 条件写（RFC 3501 §6.4.6）：**全有或全无**——
     // 只要有一封的 modseq 对不上，整条命令都不改任何东西。
     let outcome = {
@@ -870,7 +1112,7 @@ where
                             }
                         }
 
-                        let ignore = config.has_fault(&Fault::IgnoreStore);
+                        let ignore = ignore_store;
                         if ignore {
                             // 「听话的假服务器」：回 OK 但**不真的改**。
                             // 客户端只有**回读确认**才能发现（见 ARCHITECTURE §6）。

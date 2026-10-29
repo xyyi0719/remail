@@ -147,7 +147,7 @@ pub async fn push_flags(
             .collect::<Result<Vec<_>, _>>()?;
 
         match push_one(session, epoch, uid, &intents).await {
-            Ok(Outcome::NoChange) => {
+            Ok(Outcome::NoChange { flags }) => {
                 // 净变化为零 → 意图已经在服务器上生效了，不必发命令。
                 // 算成功：读到的快照本身就是服务器的确认。
                 report.succeeded += 1;
@@ -163,6 +163,16 @@ pub async fn push_flags(
                     )
                     .await?;
                 }
+                // 本地视图对齐到**服务器上**的状态。
+                message_dao::update_message_flags_by_uid(
+                    pool,
+                    &folder.account_id,
+                    &folder.id,
+                    epoch,
+                    uid,
+                    flags,
+                )
+                .await?;
             }
             Ok(Outcome::Confirmed { flags, submitted }) => {
                 report.succeeded += 1;
@@ -239,7 +249,12 @@ pub async fn push_flags(
 /// 一封邮件的回写结果。
 enum Outcome {
     /// 净变化为零，没发命令。
-    NoChange,
+    ///
+    /// 附带**服务器上的**标记：本地视图要照它对齐——
+    /// 「意图已经在服务器上生效」是一句关于**服务器**的话，
+    /// 本地视图不跟着改，操作一完成叠加层就撤了，
+    /// 界面上的星标会**自己弹回去**。
+    NoChange { flags: MessageFlags },
     /// 服务器已确认，附带**服务器上的**最终标记与发出的命令数。
     Confirmed {
         flags: MessageFlags,
@@ -274,7 +289,11 @@ async fn push_one(
         let plan = plan_flag_update(uid, snapshot.flags, epoch, snapshot.modseq, intents);
 
         let Some(delta) = plan.delta else {
-            return Ok(Outcome::NoChange);
+            // 净变化为零：服务器上已经是目标状态。
+            // 把服务器上的标记带回去，让本地视图跟着对齐。
+            return Ok(Outcome::NoChange {
+                flags: snapshot.flags,
+            });
         };
 
         // 发命令。

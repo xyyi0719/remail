@@ -8,6 +8,7 @@ members = [
     "crates/xremail-api",
     "crates/xremail-sync",
     "crates/xremail-protocol-imap",
+    "crates/xremail-protocol-smtp",
     "crates/xremail-testkit",
     "crates/xremail-message",
     "crates/xremail-diagnostics",
@@ -38,6 +39,7 @@ xremail-crypto = { path = "crates/xremail-crypto" }
 xremail-api = { path = "crates/xremail-api" }
 xremail-sync = { path = "crates/xremail-sync" }
 xremail-protocol-imap = { path = "crates/xremail-protocol-imap" }
+xremail-protocol-smtp = { path = "crates/xremail-protocol-smtp" }
 
 anyhow = "1"
 thiserror = "2"

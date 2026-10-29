@@ -12,6 +12,9 @@ xremail-core = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
+# 假 SMTP 服务器要解析 AUTH PLAIN / AUTH LOGIN 的 base64 载荷。
+base64 = { workspace = true }
+
 # TLS：假服务器用自签证书。
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

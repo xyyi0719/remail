@@ -123,6 +123,21 @@ pub async fn enqueue_operation(pool: &SqlitePool, operation: &MailOperation) -> 
 /// 列出某个文件夹里**还没完结**的操作。
 ///
 /// 按 `seq` 升序——提交时按这个顺序重放意图。
+///
+/// ## 为什么 `uncertain` 也在里面
+///
+/// `uncertain` = 「命令发出去了，但没收到确认」。它**还没完结**：
+/// 服务器上到底有没有生效，至今不知道。
+///
+/// 如果把它排除在外，这条意图就**永远没人管了**——
+/// 用户点的星标既没提交成功，也不会被再提交一次，
+/// 界面还会把本地视图弹回服务器的样子（像没点过）。
+///
+/// 捞出来不等于「盲目重试」：提交层会**先读服务器快照再重算净变化**
+/// （见 `xremail_sync::push_flags`）。服务器上已经有了 → 一条命令都不发，
+/// 直接算成功；没有 → 这才发。
+/// 所以重放是**幂等**的，安全性由「以服务器为准」保证，
+/// 而不是靠「不敢重试」把意图晾在那里。
 pub async fn list_pending_operations(
     pool: &SqlitePool,
     account_id: &str,
@@ -136,7 +151,7 @@ pub async fn list_pending_operations(
                attempts, error_kind, error_message, created_at, updated_at
         FROM mail_operation
         WHERE account_id = ? AND folder_id = ?
-          AND state IN ('queued', 'running', 'retryable')
+          AND state IN ('queued', 'running', 'retryable', 'uncertain')
         ORDER BY seq ASC
         "#,
         account_id,
@@ -192,7 +207,7 @@ pub async fn list_all_pending_operations(
                attempts, error_kind, error_message, created_at, updated_at
         FROM mail_operation
         WHERE account_id = ?
-          AND state IN ('queued', 'running', 'retryable')
+          AND state IN ('queued', 'running', 'retryable', 'uncertain')
         ORDER BY seq ASC
         "#,
         account_id

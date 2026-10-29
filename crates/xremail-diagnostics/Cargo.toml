@@ -11,11 +11,20 @@ authors.workspace = true
 # 诊断工具同时用到**协议层**（IMAP）与**内容层**（MIME/charset），
 # 而这两层之间不应该有依赖关系——所以工具单独成 crate。
 xremail-protocol-imap = { path = "../xremail-protocol-imap" }
+# SMTP 探测工具用（与 IMAP 探测工具并列）。
+xremail-protocol-smtp = { path = "../xremail-protocol-smtp" }
 xremail-message = { path = "../xremail-message" }
 # 同步冒烟测试要用。
 xremail-sync = { path = "../xremail-sync" }
 xremail-store = { path = "../xremail-store" }
 xremail-core = { path = "../xremail-core" }
+# 「建议配置」块要用领域模型的 serde 名（"implicit" / "login" …）。
+serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+# SMTP 探测工具的端到端自检：假 SMTP 服务器（见 crates/xremail-testkit/src/smtp.rs）。
+xremail-testkit = { path = "../xremail-testkit" }
+tokio = { workspace = true }
