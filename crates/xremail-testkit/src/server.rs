@@ -19,12 +19,12 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
 use crate::certificate::{CertError, ServerCertificate};
-use crate::config::{Fault, MailboxFixture, ServerConfig};
+use crate::config::{Fault, MailboxFixture, MessageFixture, ServerConfig};
 use crate::fetch::{FetchItem, StoreOperation, build_fetch_response, parse_fetch, parse_store};
 use crate::parser::{Command, quote};
 use crate::search;
@@ -70,6 +70,10 @@ pub struct FakeImapServer {
     handle: tokio::task::JoinHandle<()>,
     /// 已收到的命令（按到达顺序）。
     log: Arc<Mutex<Vec<String>>>,
+    /// 邮箱的**活的状态**（`APPEND` 之类的写操作会改它）。
+    mailboxes: Arc<Mutex<Vec<MailboxFixture>>>,
+    /// 这个服务器的 UIDVALIDITY。
+    uid_validity: u32,
 }
 
 impl FakeImapServer {
@@ -97,6 +101,7 @@ impl FakeImapServer {
             .map_err(|e| ServerError::Listen(e.to_string()))?;
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let uid_validity = config.uid_validity;
         let config = Arc::new(config);
         // 邮箱的**活的状态**：配置里的内容是初始值，复制一份出来给连接用。
         let mailboxes = Arc::new(Mutex::new(config.mailboxes.clone()));
@@ -106,6 +111,7 @@ impl FakeImapServer {
 
         let handle = tokio::spawn({
             let log = log.clone();
+            let mailboxes = mailboxes.clone();
             async move {
                 tokio::select! {
                     _ = shutdown_rx => {}
@@ -120,6 +126,8 @@ impl FakeImapServer {
             shutdown: shutdown_tx,
             handle,
             log,
+            mailboxes,
+            uid_validity,
         })
     }
 
@@ -131,6 +139,20 @@ impl FakeImapServer {
     /// 端口。
     pub fn port(&self) -> u16 {
         self.addr.port()
+    }
+
+    /// 这个服务器的 UIDVALIDITY。
+    pub fn uid_validity(&self) -> u32 {
+        self.uid_validity
+    }
+
+    /// 邮箱当前的内容（快照）。
+    ///
+    /// 用来断言「服务器上真的多了一封信」——
+    /// 比如 `APPEND` 之后已发送文件夹里该有几封。
+    pub fn mailboxes(&self) -> Vec<MailboxFixture> {
+        let guard = lock_mailboxes(&self.mailboxes);
+        guard.clone()
     }
 
     /// 客户端要连的主机名（与证书里的 SAN 一致）。
@@ -291,12 +313,20 @@ async fn handle_connection(
                 // 执行命令（效果落到服务器上），但**把响应丢掉**再断线。
                 // 客户端收到的是「发出去就没了」，只能靠回读收敛。
                 let mut discard = tokio::io::sink();
+                let mut discard_reader = tokio::io::empty();
                 let ctx = ServerCtx {
                     config: &config,
                     mailboxes: &mailboxes,
                     faults: &faults,
                 };
-                let _ = handle_command(&mut discard, &ctx, &mut state, &command).await;
+                let _ = handle_command(
+                    &mut discard,
+                    &mut discard_reader,
+                    &ctx,
+                    &mut state,
+                    &command,
+                )
+                .await;
                 break;
             }
             FaultAction::Delay(ms) => {
@@ -311,7 +341,7 @@ async fn handle_connection(
             mailboxes: &mailboxes,
             faults: &faults,
         };
-        match handle_command(&mut write_half, &ctx, &mut state, &command).await {
+        match handle_command(&mut write_half, &mut reader, &ctx, &mut state, &command).await {
             Ok(Continue::Continue) => {}
             Ok(Continue::Close) => break,
             Err(_) => break,
@@ -505,14 +535,16 @@ enum Continue {
 }
 
 /// 处理一条命令。
-async fn handle_command<W>(
+async fn handle_command<W, R>(
     mut writer: &mut W,
+    reader: &mut R,
     ctx: &ServerCtx<'_>,
     state: &mut SessionState,
     command: &Command,
 ) -> std::io::Result<Continue>
 where
     W: AsyncWrite + Unpin,
+    R: AsyncRead + Unpin,
 {
     let config = ctx.config;
     let mailboxes = ctx.mailboxes;
@@ -706,6 +738,67 @@ where
             reply!(writer, "{} OK STATUS completed", command.tag);
         }
 
+        "APPEND" => {
+            // APPEND：把一封信存进文件夹末尾。
+            //
+            // 正文是**字面量**：命令头里写长度，服务器回 `+`，
+            // 客户端才发那么多字节过来——所以这里要读 reader。
+            let Some(size) = command.literal_size() else {
+                reply!(writer, "{} BAD APPEND without literal", command.tag);
+                return Ok(Continue::Continue);
+            };
+
+            let name = command.first_quoted().unwrap_or_default();
+            let index = {
+                let guard = lock_mailboxes(mailboxes);
+                find_mailbox_index(&guard, &name)
+            };
+            let Some(index) = index else {
+                reply!(writer, "{} NO Mailbox does not exist", command.tag);
+                return Ok(Continue::Continue);
+            };
+
+            let flags = parse_append_flags(&command.args);
+
+            // 让客户端发正文。
+            reply!(writer, "+ Ready for literal data");
+
+            let mut body = vec![0u8; size];
+            reader.read_exact(&mut body).await?;
+            // 字面量后面跟一个 CRLF，命令才算结束。
+            let mut terminator = [0u8; 2];
+            reader.read_exact(&mut terminator).await?;
+
+            // 锁内只改数据，不 await（锁不能跨 await）。
+            let appended = {
+                let mut guard = lock_mailboxes(mailboxes);
+                guard.get_mut(index).map(|mailbox| {
+                    let uid = mailbox.max_uid() + 1;
+                    let modseq = mailbox.messages.iter().map(|m| m.modseq).max().unwrap_or(0) + 1;
+                    mailbox.messages.push(MessageFixture {
+                        uid,
+                        flags: flags.clone(),
+                        content: String::from_utf8_lossy(&body).into_owned(),
+                        raw: Some(body),
+                        modseq,
+                    });
+                    uid
+                })
+            };
+            let Some(uid) = appended else {
+                reply!(writer, "{} NO Mailbox does not exist", command.tag);
+                return Ok(Continue::Continue);
+            };
+
+            reply!(
+                writer,
+                "{} OK [APPENDUID {} {}] APPEND completed",
+                command.tag,
+                config.uid_validity,
+                uid
+            );
+        }
+
         "FETCH" => {
             return handle_fetch(&mut writer, ctx, state, &command.tag, &command.args, false).await;
         }
@@ -779,6 +872,20 @@ where
     }
 
     Ok(Continue::Continue)
+}
+
+/// 解析 `APPEND` 参数里的标记列表（`(\Seen)`）。
+fn parse_append_flags(args: &str) -> Vec<String> {
+    let Some(open) = args.find('(') else {
+        return Vec::new();
+    };
+    let Some(close) = args[open..].find(')') else {
+        return Vec::new();
+    };
+    args[open + 1..open + close]
+        .split_whitespace()
+        .map(|flag| flag.to_string())
+        .collect()
 }
 
 /// 处理 `FETCH` / `UID FETCH`。

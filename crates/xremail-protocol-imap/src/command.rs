@@ -278,7 +278,7 @@ fn is_modified(outcome: &imap_proto::Outcome<'_>) -> bool {
 ///
 /// **带上 response code**——`[READ-ONLY]` / `[MODIFIED]` / `[ALERT]` 这些
 /// 才是真正决定下一步怎么做的信息，光看文字容易漏掉。
-fn outcome_information(outcome: &imap_proto::Outcome<'_>) -> String {
+pub(crate) fn outcome_information(outcome: &imap_proto::Outcome<'_>) -> String {
     let code = match &outcome.code {
         Some(code) => format!("{code:?} "),
         None => String::new(),

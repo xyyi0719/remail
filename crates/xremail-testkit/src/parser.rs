@@ -69,6 +69,25 @@ impl Command {
         let (sub, tail) = rest.split_once(char::is_whitespace)?;
         Some((sub.to_ascii_uppercase(), tail.trim()))
     }
+
+    /// 命令里声明的**字面量长度**（`{123}` 或同步字面量 `{123+}`）。
+    ///
+    /// `APPEND` 的正文就是字面量：命令头里写着长度，
+    /// 服务器回 `+` 之后客户端才发那么多字节过来。
+    ///
+    /// ```
+    /// # use xremail_testkit::parser::Command;
+    /// # let cmd = Command::parse("a1 APPEND \"INBOX\" {12+}").unwrap();
+    /// # assert_eq!(cmd.literal_size(), Some(12));
+    /// ```
+    pub fn literal_size(&self) -> Option<usize> {
+        let open = self.args.rfind('{')?;
+        let rest = &self.args[open + 1..];
+        let close = rest.find('}')?;
+        let digits = &rest[..close];
+        let digits = digits.strip_suffix('+').unwrap_or(digits);
+        digits.parse().ok()
+    }
 }
 
 /// 取出参数里所有引号字符串（`"..."`），并处理 `\"` 转义。

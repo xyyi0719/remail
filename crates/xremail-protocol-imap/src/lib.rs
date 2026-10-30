@@ -12,6 +12,7 @@
 //! * 错误信息**不含**用户名或口令。
 //! * 探测流程严格只读（见 [`probe`]）。
 
+pub mod append;
 pub mod command;
 pub mod connection;
 pub mod credential;
@@ -20,6 +21,7 @@ pub mod folders;
 pub mod probe;
 pub mod utf7;
 
+pub use append::{AppendOptions, AppendOutcome, append_message, build_append_command};
 pub use command::{
     CommandOutcome, FetchedMessage, ListedMailbox, MailboxInfo, examine_checked, run_checked,
 };
