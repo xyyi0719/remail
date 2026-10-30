@@ -348,7 +348,7 @@ impl MessageFlags {
     /// IMAP 系统标记名 → 位掩码。
     ///
     /// 认不出的名字（自定义关键字）**忽略**，不是错误：
-    /// 服务器可能给邮件打上应用自���的关键字，客户端不认识就不管。
+    /// 服务器可能给邮件打上应用自定义的关键字，客户端不认识就不管。
     pub fn from_imap_names(names: &[impl AsRef<str>]) -> Self {
         let mut flags = Self::empty();
         for name in names {

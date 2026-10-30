@@ -156,7 +156,7 @@ async fn the_intent_only_carries_the_bit_that_was_asked_for() {
     assert_eq!(
         operation.intent.add,
         MessageFlags::empty().with(MessageFlags::SEEN),
-        "置位应当只带 SEEN 那一��"
+        "置位应当只带 SEEN 那一项"
     );
     assert!(operation.intent.remove.is_empty(), "置位时不该同时带清除位");
 
@@ -168,7 +168,7 @@ async fn the_intent_only_carries_the_bit_that_was_asked_for() {
     assert_eq!(
         cleared.intent.remove,
         MessageFlags::empty().with(MessageFlags::SEEN),
-        "清位应当只带 SEEN 那一��"
+        "清位应当只带 SEEN 那一项"
     );
 }
 

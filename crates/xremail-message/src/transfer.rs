@@ -158,7 +158,7 @@ pub fn decode_base64(bytes: &[u8]) -> Vec<u8> {
     match STANDARD.decode(&cleaned) {
         Ok(decoded) => decoded,
         Err(_) => {
-            // 逐块试：base64 以 4 字符为一组，丢掉不成组��尾巴。
+            // 逐块试：base64 以 4 字符为一组，丢掉不成组的尾巴。
             let mut out = Vec::new();
             let mut chunk = Vec::with_capacity(4);
             for byte in cleaned {
