@@ -7,6 +7,21 @@
 ## [Unreleased]
 
 ### Added
+- **IMAP `APPEND`（发信存副本）**（2026-10-30）
+  - **协议层**：`crates/xremail-protocol-imap/src/append.rs`
+    （命令编码 + 逐行解析字面量应答）、`AppendOptions{flags,internal_date}`、
+    `AppendOutcome{uid}`
+  - **服务层**：`apps/shell/src-tauri/src/service/sent_copy.rs`
+    ——「**先查、没有才补**」的自适应逻辑：
+    1. 发完等 **2.5 秒**沉降窗口，让服务器自己存；
+    2. 在「已发送」里按 `Message-ID` 找这封信；
+    3. 找到了 → 服务器自己存了，**不碰**；
+    4. 没找到 → 自己 `APPEND` 一份；
+    5. 被拒且理由是「已经存过了」 → 当「已有一份」（**第二道保险**）
+  - 匹配按**头值里的尖括号段**比——QQ 会**改写** `Message-ID`，
+    原值挪到 `X-OQ-MSGID` 头里
+  - 用例：协议层 4 条、服务层 4 条 + 单元 6 条；
+    真邮箱往返用例断言**两个方向的「已发送」都正好一份**
 - **真实发信往返验收**（`apps/shell/src-tauri/tests/real_mail_roundtrip.rs`）：
   用**真实的 163 / QQ 账户双向真发信**（163 → QQ、QQ → 163），
   逐项核对：提交结果、对方收件箱里的投递、**正文里的标记**、以及
@@ -311,6 +326,13 @@
 - `xremail-core` 的 `Folder` 新增 `uidvalidity` 字段（该文件夹的 **epoch**）：它本来就是领域概念（ARCHITECTURE §4.3 要求按 epoch 切换游标），此前模型里没有，DAO 无法往返
 
 ### Changed
+- **「QQ 不存副本」的结论是错的，已修正**（2026-10-30）：
+  第一次实测在提交完**立刻**查「已发送」，QQ 是空的，当时记成「QQ 不存」。
+  **QQ 其实存**，只是**异步落盘**，实测 **30–90 秒**后才看得到。
+  ⇒ 查副本**必须轮询**（真邮箱用例现在等满 120 秒），
+  查一次就下结论会把「还没到」误判成「没有」。
+  受影响的文档：`docs/PROTOCOLS.md`、`docs/ISSUES_AND_RISKS.md` R18、
+  `docs/ARCHITECTURE.md` §5、`docs/ROADMAP.md` P3。
 - **文档对齐到发信链路的真实状态**（2026-10-28）：
   - `docs/ARCHITECTURE.md` §5：补上发信路径的**实现落点**（落草稿 → 冻结字节 → 抢占 →
     提交 → 记结局 → 回读）与三条硬规则（冻结后不可改、不确定不自动重发、前置失败也要记账）；
@@ -322,7 +344,7 @@
     并写明「还没用真实测试账户真的发过一封信」
   - `docs/ISSUES_AND_RISKS.md`：R04（发送已定义并实现）、R18（提交路径已实现但未实测真发）、
     R21（「换 TLS 版本」这条路对沃无效——问题在密钥交换套件）
-  - `docs/TESTING_STRATEGY.md`：用例数更新为 **524**（Rust）+ **27**（前端）；
+  - `docs/TESTING_STRATEGY.md`：用例数更新为 **544**（Rust）+ **27**（前端）；
     补记本机 16 核构建会被 OOM 杀掉 rustc 的坑与两种避开方式
 - **文档与代码对齐（2026-10-23）**——此前文档比代码落后了好几轮：
   - `docs/ROADMAP.md`：P0 剩余项（跨表事务封装、升级路径测试）已完成；
