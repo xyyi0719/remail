@@ -4,8 +4,11 @@
 //!
 //! 1. 真实 SMTP 提交能走通（`MAIL FROM` → `RCPT TO` → `DATA` → `QUIT`）；
 //! 2. 对方**真的收到**（IMAP 拉取 + 正文里有标记）；
-//! 3. 顺带探明一件对设计有决定意义的事：**服务器会不会把已发送副本
-//!    `APPEND` 到「已发送」文件夹**——这决定程序要不要自动往那里写副本。
+//! 3. 发件方自己的「已发送」里**正好有一份**这封信。
+//!
+//! 第 3 条是**自适应**副本策略的验收：163 的服务器会自己存一份，
+//! QQ 不会——所以程序会先查、查不到才自己 `APPEND`。
+//! 结果必须是**一份**：两份就是补重了（163 的坑），零份就是没落地。
 //!
 //! ## 为什么默认不跑
 //!
@@ -124,11 +127,39 @@ async fn run_direction(sender: &Mailbox, receiver: &Mailbox, title: &str) {
         None => panic!("{title} 提交成功但收件方 120 秒内没收到 —— 链路有问题"),
     }
 
-    match sent_folder_contains(sender, &marker).await {
-        Some(true) => println!("已发送副本：服务器**自己** APPEND 了一份到「已发送」"),
-        Some(false) => println!("已发送副本：服务器**没有** APPEND（程序若要存副本得自己来）"),
-        None => println!("已发送副本：查不到（文件夹打不开，或里面没有这封信）"),
+    match wait_for_sent_copies(sender, &marker).await {
+        Some(1) => println!("已发送副本：**正好一份**（服务器自己存的，或程序补的）"),
+        Some(0) => panic!("{title} 发完「已发送」里没有这封信 —— 副本没落地"),
+        Some(count) => panic!(
+            "{title} 发完「已发送」里有 {count} 份同样的信 —— 补重了（服务器自己存了一份，程序又补了一份？）"
+        ),
+        None => println!("已发送副本：查不到（文件夹打不开，这一项没法验）"),
     }
+}
+
+/// 轮询发件方的「已发送」，等副本出现（最多等两分钟）。
+///
+/// ## 为什么要等
+///
+/// **163 的副本几乎立刻就有，QQ 的要等几十秒**（实测 2026-10-30：
+/// QQ 是 SMTP 侧异步落盘，提交后 30–90 秒才在 IMAP 里看得到）。
+/// 查一次就下结论会把「还没到」误判成「没有」。
+async fn wait_for_sent_copies(sender: &Mailbox, marker: &str) -> Option<usize> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    let mut last = None;
+    while std::time::Instant::now() < deadline {
+        match sent_folder_copies(sender, marker).await {
+            Some(count) => {
+                last = Some(count);
+                if count > 0 {
+                    return Some(count);
+                }
+            }
+            None => return None,
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    last
 }
 
 /// 一封发到对端的邮件摘要（含**在哪个文件夹**找到的）。
@@ -340,8 +371,17 @@ fn decode_subject(raw: &str) -> String {
     "<没找到 Subject>".to_string()
 }
 
-/// 「已发送」文件夹里有没有这封信（服务器是否自己 APPEND 了副本）。
-async fn sent_folder_contains(mailbox: &Mailbox, marker: &str) -> Option<bool> {
+/// 「已发送」文件夹里**有几份**这封信。
+///
+/// 返回 `None` = 文件夹打不开（这一项没法验）。
+/// 返回 `Some(n)`：n = 带这个标记的信的份数。
+///
+/// **必须是 1**：
+///
+/// * 服务器自己存（163）→ 程序不该再补 → 1；
+/// * 服务器不存（QQ）→ 程序得补 → 1；
+/// * 2 = 补重了。
+async fn sent_folder_copies(mailbox: &Mailbox, marker: &str) -> Option<usize> {
     let config = ImapConfig::imaps(mailbox.imap_host.clone());
     let (mut session, _caps, _tls) = connect_and_login(&config, &mailbox.email, &mailbox.password)
         .await
@@ -373,14 +413,19 @@ async fn sent_folder_contains(mailbox: &Mailbox, marker: &str) -> Option<bool> {
     .await
     .ok()?;
     let CommandOutcome::Fetches(messages) = outcome else {
-        return Some(false);
+        return Some(0);
     };
-    Some(messages.iter().any(|message| {
-        message
-            .header
-            .as_ref()
-            .is_some_and(|header| String::from_utf8_lossy(header).contains(marker))
-    }))
+    Some(
+        messages
+            .iter()
+            .filter(|message| {
+                message
+                    .header
+                    .as_ref()
+                    .is_some_and(|header| String::from_utf8_lossy(header).contains(marker))
+            })
+            .count(),
+    )
 }
 
 /// 凭据文件路径（**在仓库之外**）。
