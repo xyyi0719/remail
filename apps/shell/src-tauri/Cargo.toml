@@ -33,6 +33,8 @@ xremail-protocol-imap = { workspace = true }
 xremail-protocol-smtp = { workspace = true }
 xremail-message = { workspace = true }
 sqlx = { workspace = true }
+# 异步运行时：服务层要 `tokio::time::sleep`（补「已发送」副本前等一拍）。
+tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

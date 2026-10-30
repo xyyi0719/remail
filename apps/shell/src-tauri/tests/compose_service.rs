@@ -17,11 +17,13 @@
 use sqlx::SqlitePool;
 use xremail_api::{NewAccountRequest, SecretValue};
 use xremail_core::model::{ProviderKind, SendState, SmtpAuth, SyncMode, TlsMode};
+use xremail_protocol_imap::TlsTrust as ImapTlsTrust;
 use xremail_protocol_smtp::TlsTrust;
 use xremail_shell_lib::service::account::AccountService;
 use xremail_shell_lib::service::compose::{ComposeService, DraftInput, SendResultState};
 use xremail_store::dao::send_queue as send_queue_dao;
 use xremail_testkit::smtp::{FakeSmtpServer, SmtpServerConfig};
+use xremail_testkit::{FakeImapServer, MailboxFixture, ServerConfig};
 
 /// 假服务器的登录凭据。
 const USER: &str = "user@163.com";
@@ -32,14 +34,33 @@ struct Fixture {
     service: ComposeService,
     pool: SqlitePool,
     account_id: String,
+    /// 假 IMAP 服务器（发信后要把副本存进它的「已发送」）。
+    ///
+    /// `offline()` 那套不连任何服务器，所以是 `None`。
+    imap: Option<FakeImapServer>,
 }
 
 impl Fixture {
     /// 造一个指向假 SMTP 服务器的套件（信任它的自签 CA）。
+    ///
+    /// 同时起一个**假 IMAP 服务器**：发信成功后要把副本存进它的「已发送」，
+    /// 所以账户的 IMAP 地址得指过去（否则「确保有副本」那一步会连不上）。
     async fn with_server(config: SmtpServerConfig) -> (Self, FakeSmtpServer) {
         let server = FakeSmtpServer::start(config)
             .await
             .expect("假 SMTP 服务器启动失败");
+        let imap = FakeImapServer::start(ServerConfig {
+            user: USER.to_string(),
+            password: PASSWORD.to_string(),
+            mailboxes: vec![
+                MailboxFixture::new("INBOX"),
+                MailboxFixture::new("已发送").with_attribute("\\Sent"),
+            ],
+            ..ServerConfig::default()
+        })
+        .await
+        .expect("假 IMAP 服务器启动失败");
+
         let pool = xremail_store::open_pool_in_memory(&xremail_store::PoolConfig::default())
             .await
             .expect("打开内存库失败");
@@ -51,8 +72,8 @@ impl Fixture {
                 email: USER.to_string(),
                 provider: ProviderKind::Netease163,
                 display_name: None,
-                imap_host: server.host().to_string(),
-                imap_port: server.port(),
+                imap_host: imap.host().to_string(),
+                imap_port: imap.port(),
                 imap_tls: TlsMode::Implicit,
                 smtp_host: server.host().to_string(),
                 smtp_port: server.port(),
@@ -66,16 +87,19 @@ impl Fixture {
             .expect("建账户失败")
             .id;
 
-        let service = ComposeService::with_trust(
+        let service = ComposeService::with_trusts(
             pool.clone(),
             accounts,
             TlsTrust::Roots(server.root_store()),
-        );
+            ImapTlsTrust::Roots(imap.root_store()),
+        )
+        .with_settle(0);
         (
             Self {
                 service,
                 pool,
                 account_id,
+                imap: Some(imap),
             },
             server,
         )
@@ -112,6 +136,7 @@ impl Fixture {
             service,
             pool,
             account_id,
+            imap: None,
         }
     }
 
@@ -199,6 +224,40 @@ async fn accepted_message_is_reported_as_sent_and_reaches_the_server() {
     let row = fixture.stored().await;
     assert_eq!(row.state, SendState::Succeeded);
     assert_eq!(row.message_bytes.as_deref(), Some(received.as_slice()));
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_sent_copy_is_stored_in_the_sent_folder_after_a_successful_send() {
+    // QQ 那种服务器：自己不留副本 → 发完得在「已发送」里补一份。
+    let (fixture, server) = Fixture::with_server(secure_config()).await;
+
+    let result = fixture
+        .service
+        .send(&draft(&fixture.account_id), &credential())
+        .await
+        .unwrap();
+    assert_eq!(result.state, SendResultState::Sent);
+
+    let received = server.last_message().expect("服务器没收到信");
+    let imap = fixture.imap.as_ref().expect("这套件有假 IMAP 服务器");
+    let sent = imap
+        .mailboxes()
+        .into_iter()
+        .find(|mailbox| mailbox.name == "已发送")
+        .expect("没有「已发送」文件夹");
+
+    assert_eq!(
+        sent.messages.len(),
+        1,
+        "发出去的信应当在「已发送」里留下一份"
+    );
+    assert_eq!(
+        sent.messages[0].raw.as_deref(),
+        Some(received.as_slice()),
+        "留的那份必须和发出去的一模一样"
+    );
 
     server.shutdown().await;
 }

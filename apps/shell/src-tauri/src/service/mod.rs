@@ -17,12 +17,14 @@ pub mod account;
 pub mod compose;
 pub mod credential;
 pub mod message;
+pub mod sent_copy;
 pub mod sync;
 
 pub use account::AccountService;
 pub use compose::{ComposeService, DraftDto, DraftInput, SendResult, SendResultState};
 pub use credential::CredentialService;
 pub use message::{FolderDto, MessageFlag, MessageService};
+pub use sent_copy::{SentCopyOutcome, SentCopyService};
 pub use sync::SyncService;
 
 /// 当前时间（epoch 毫秒）。

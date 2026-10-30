@@ -34,12 +34,14 @@ use xremail_api::SecretValue;
 use xremail_core::model::{Account, SendAttachment, SendQueueEntry, SendState, TlsMode};
 use xremail_core::{AppError, AppResult};
 use xremail_message::compose::{BuildOptions, OutgoingMessage, build_message};
+use xremail_protocol_imap::TlsTrust as ImapTlsTrust;
 use xremail_protocol_smtp::{
     Envelope, SmtpConfig, SmtpError, SubmitOutcome, SubmitRequest, TlsTrust, submit_message,
 };
 use xremail_store::dao::send_queue as send_queue_dao;
 
 use super::account::AccountService;
+use super::sent_copy::{SentCopyOutcome, SentCopyService};
 use super::{current_time_ms, new_operation_id};
 
 /// 前端传来的草稿内容。
@@ -160,6 +162,11 @@ pub struct ComposeService {
     /// 测试用假 SMTP 服务器的自签 CA 换进去（见 `tests/compose_service.rs`）。
     /// 换的是**信任锚**，不是关掉校验：证书照样必须通过验证。
     trust: TlsTrust,
+    /// 「发完确保已发送副本」。
+    ///
+    /// 163 的服务器会自己存副本，QQ 不会——所以这一步是**自适应**的：
+    /// 先查「已发送」里有没有这封信，没有才自己补一份（见 [`SentCopyService`]）。
+    sent_copy: SentCopyService,
 }
 
 impl ComposeService {
@@ -169,16 +176,34 @@ impl ComposeService {
             pool,
             accounts,
             trust: TlsTrust::SystemRoots,
+            sent_copy: SentCopyService::new(ImapTlsTrust::SystemRoots),
         }
     }
 
-    /// 指定 TLS 信任根（**只给测试用**）。
-    pub fn with_trust(pool: SqlitePool, accounts: AccountService, trust: TlsTrust) -> Self {
+    /// 指定 SMTP 与 IMAP 的 TLS 信任根（**只给测试用**）。
+    ///
+    /// 两个协议的 `TlsTrust` 是**各自 crate 里的不同类型**——
+    /// 假 SMTP 服务器与假 IMAP 服务器各有各的自签 CA，所以得分开给。
+    ///
+    /// 换的是**信任锚**，不是关掉校验：证书照样必须通过验证。
+    pub fn with_trusts(
+        pool: SqlitePool,
+        accounts: AccountService,
+        smtp_trust: TlsTrust,
+        imap_trust: ImapTlsTrust,
+    ) -> Self {
         Self {
             pool,
             accounts,
-            trust,
+            trust: smtp_trust,
+            sent_copy: SentCopyService::new(imap_trust),
         }
+    }
+
+    /// 改「补副本前等多久」（**给测试用**：`0` = 不等）。
+    pub fn with_settle(mut self, settle_ms: u64) -> Self {
+        self.sent_copy = self.sent_copy.with_settle(settle_ms);
+        self
     }
 
     /// 存草稿（新建或更新）。
@@ -320,6 +345,35 @@ impl ComposeService {
         let message_id = entry.message_id.clone().unwrap_or_default();
 
         self.submit_and_record(&account, credential, id, &recipients, &bytes, &message_id)
+            .await
+    }
+
+    /// 确保「已发送」里有这封信的一份。
+    ///
+    /// **幂等**：已经有一份就什么都不做（163 的服务器会自己存，
+    /// 再存一份就变成两封）。
+    ///
+    /// 字节用的是**库里冻结的那一份**——和发出去的一模一样，
+    /// 所以补出来的副本和服务器收下的是同一封信。
+    pub async fn ensure_sent_copy(
+        &self,
+        account_id: &str,
+        entry_id: &str,
+        credential: &SecretValue,
+    ) -> AppResult<SentCopyOutcome> {
+        let account = self.require_account(account_id).await?;
+        let entry = send_queue_dao::get_entry(&self.pool, entry_id)
+            .await?
+            .filter(|entry| entry.account_id == account_id)
+            .ok_or_else(|| AppError::NotFound(format!("发信记录 {entry_id} 不存在")))?;
+
+        let bytes = entry.message_bytes.clone().ok_or_else(|| {
+            AppError::Invalid("这封信没有留出发送用的字节，无法存副本".to_string())
+        })?;
+        let message_id = entry.message_id.clone().unwrap_or_default();
+
+        self.sent_copy
+            .ensure_sent_copy(&account, credential, &message_id, &bytes)
             .await
     }
 
@@ -503,14 +557,42 @@ impl ComposeService {
         let stored = send_queue_dao::get_entry(&self.pool, entry_id)
             .await?
             .ok_or_else(|| AppError::Storage("发信记录已落库，但读不回来".to_string()))?;
+        let message_id = stored
+            .message_id
+            .clone()
+            .unwrap_or_else(|| fallback_message_id.to_string());
+
+        // 发出去了 → 确保「已发送」里有这份。
+        //
+        // **这一步失败不能把发送算成失败**：信已经发出去了，
+        // 存不存副本只影响「已发送」文件夹里看不看得到它。
+        // 所以失败只变成一句给用户看的补充说明，不改结论。
+        let copy_note = if state == SendResultState::Sent {
+            match self
+                .ensure_sent_copy(&account.id, entry_id, credential)
+                .await
+            {
+                Ok(SentCopyOutcome::AlreadyPresent) => None,
+                Ok(SentCopyOutcome::Appended { .. }) => None,
+                Ok(SentCopyOutcome::NoSentFolder) => {
+                    Some("这个账户没有「已发送」文件夹，没法存副本".to_string())
+                }
+                Err(error) => Some(format!("信已发出，但没能存一份到「已发送」：{error}")),
+            }
+        } else {
+            None
+        };
+
+        let mut detail =
+            describe_outcome(&outcome, stored.error_message.as_deref(), note.as_deref());
+        if let Some(extra) = copy_note {
+            detail = format!("{detail}（{extra}）");
+        }
 
         Ok(SendResult {
-            message_id: stored
-                .message_id
-                .clone()
-                .unwrap_or_else(|| fallback_message_id.to_string()),
+            message_id,
             state,
-            detail: describe_outcome(&outcome, stored.error_message.as_deref(), note.as_deref()),
+            detail,
         })
     }
 
