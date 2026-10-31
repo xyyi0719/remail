@@ -50,8 +50,8 @@
 | R02 | 外部接入 | 163/QQ/沃邮箱的能力与认证行为未实测 | 高 | 同上；分别记录三家，不互相推断 | **已实测**（2026-10-23，三家分别记录于 [PROTOCOLS.md](PROTOCOLS.md)；关键差异：QQ 独有 IDLE+MOVE、163 必须先发 `ID`、沃也是 Coremail 但不要求 `ID`） |
 | R03 | 数据正确性 | UIDVALIDITY 变更会使旧 UID 操作指向错误邮件 | 高 | 同一事务更换 epoch、失效旧缓存/游标；旧 epoch 操作隔离，测试崩溃恢复 | **已实现**（`plan_epoch_transition` + `commit_folder_sync` 单事务切换；旧 epoch 操作隔离为 `failed`。用例：`epoch_change_triggers_a_rebuild`、`operations_bound_to_the_old_epoch_are_quarantined`。**崩溃恢复测试仍缺**） |
 | R04 | 数据正确性 | flag 并发、移动、删除、发送的重试语义未定义 | 高 | 按 ARCHITECTURE 的操作状态与不确定结果策略测试 | **部分实现**：flag 并发已定（「读快照 → 重放意图 → **回读确认**」，三种失败分类 `retryable`/`uncertain`/`failed`，见 ARCHITECTURE §2.2）；**移动 / 删除仍未定义**（P3）；**发送已定义并实现**（2026-10-28：`send_queue` 六态、`uncertain` 不自动重发、冻结字节后不可改内容，见 ARCHITECTURE §5） |
-| R05 | 数据正确性 | FTS 正文晚到、索引不一致、中文短查询 | 中 | 投影事务、重建校验、1/2 字查询策略测试 | 待实现（P2） |
-| R06 | 安全边界 | HTML/CSS/URL 可绕过图片阻断或调用宿主能力 | 高 | 清洗 + 默认禁网 CSP + WebView 网络/IPC 测试；安全门槛先于真实 HTML 展示 | 待实现（P2）。**当前状态是安全的**：`xremail-message` 只产出**未经清洗的原始 HTML**，没有任何渲染路径；前端只把它当**源码**显示（2026-10-26 接入应用时确认） |
+| R05 | 数据正确性 | FTS 正文晚到、索引不一致、中文短查询 | 中 | 投影事务、重建校验、1/2 字查询策略测试 | **已实现**（2026-10-30）：投影 `message_search_doc` + FTS5 外部内容表（trigram），索引由**触发器**维护（epoch 切换、级联删除这些不经过应用代码的路径也绕不过），`rebuild_index` + `check_index_consistency` 兼底，1~2 字符的查询退化成 `LIKE` 子串扫描；**残余**：子串扫描是全表扫描（个人邮箱量级可接受），trigram 仍无中文分词 |
+| R06 | 安全边界 | HTML/CSS/URL 可绕过图片阻断或调用宿主能力 | 高 | 清洗 + 默认禁网 CSP + WebView 网络/IPC 测试；安全门槛先于真实 HTML 展示 | **已实现**（2026-10-30）：清洗在后端完成（`xremail-core::html::sanitize_html`，标签/属性白名单、删 `script`/`style`/`iframe`/`on*`/`javascript:`、删远程图片），**原始 HTML 不出后端**（`MessageBodyView` 只带 `htmlSafe`），前端只渲染 `htmlSafe`、链接交给系统浏览器，CSP 的 `img-src` 不含 http/https；**残余**：未知标签只删标签、留着内容（真实邮件正文被 `html`/`body` 包着，连内容删会整封信消失），**真实 WebView 里的渲染与网络行为尚未在宿主上验证** |
 | R07 | 安全边界 | 钥匙串后端与失败语义、日志脱敏未落地 | 高 | 平台 SecretStore 契约测试；失败不明文落盘 | **部分实现**：契约与 mock 已有（`xremail-api::SecretStore`）；诊断工具**不打印凭据/地址**（脱敏已验证）；**Windows 后端已落地**（2026-10-26，`secrets/windows_store.rs`，真实往返用例）；**失败语义仍待定**（其它平台是桩，保存时如实报错、不落盘） |
 | R08 | 运行平台 | Android 生命周期、后台预算与通知不确定 | 中 | 早期最小真机 PoC；前台同步可用不代表可后台常驻 | 待验证（P4） |
 | R09 | 运行平台 | 首次同步与大附件耗尽内存/磁盘 | 中 | 有界批量/队列、取消、配额、超限测试，指标注明硬件与网络 | **部分实现**：有界批量已有（每批 200 个 UID；曾因 `1:*` 展开成 1.79 亿个元素把假服务器撑爆 8 GiB，已修）；**大附件、配额、取消未做**（P3） |
@@ -91,5 +91,6 @@
 | 2026-10-20 | 全部 17 个 Markdown、Rust 与前端代码、CI 配置 | 修正 `ctx()` 丢失错误分类、代码注释中的断链与过期章节号、workspace resolver、作者署名；新增 `xremail-core` 4 个单测 |
 | 2026-10-23 | 全部 13 个本地提交、10 个 crate、387 个用例 | R01/R02/R03 转为已实测/已实现；新增 R17（提交未推送）与 R18（SMTP 未实测）；修正 §1 里「workspace 只有 core 与 shell」等已过时的描述；为每条状态变更附上用例或提交名作为证据 |
 | 2026-10-26 | 同步引擎接进应用后的代码与文档、397 个用例 | 新增 R19（凭据只驻内存，每次同步要重填）与 R20（真实邮箱才暴露的两个协议陷阱：EXAMINE 必须用 UTF-7 原名、UID 是邮箱作用域的）；R06 确认仍为安全状态（HTML 只当源码显示） |
+| 2026-10-30 | P3 发信链路、本地全文搜索、HTML 正文消毒与派生 | R05 转为已实现（FTS 投影 + 触发器维护 + 重建/一致性检查 + 短词 `LIKE` 回退）；R06 转为已实现（后端消毒、原始 HTML 不出后端、链接交给系统浏览器、CSP 禁远程图片）；**残余**：真实 WebView 里的渲染与网络行为尚未在宿主上验证 |
 
 相关：[架构](ARCHITECTURE.md) · [路线图](ROADMAP.md) · [测试策略](TESTING_STRATEGY.md)

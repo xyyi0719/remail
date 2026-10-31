@@ -27,7 +27,7 @@
 | xremail-protocol-imap | IMAP 会话、能力与命令结果 | 不写库，不决定重试；**不依赖 xremail-message** |
 | xremail-protocol-smtp | SMTP 提交与分阶段结果 | 不保证 exactly-once。**只读探测**（EHLO / STARTTLS / AUTH / 证书体检）与**提交路径**（`submit_message`：MAIL FROM / RCPT TO / DATA / QUIT）均已实现；提交路径只做 ASCII 信封地址 + RFC 2047 编码的标题（不做 SMTPUTF8） |
 | xremail-sync | 账户调度、IMAP 同步、操作恢复 | 依赖 store/protocol/message/core，不认识 Tauri |
-| xremail-message | MIME 结构、charset 解码、RFC 5322 头 | 不落库、不加载远程资源；**不做 HTML 清洗**（渲染层的事） |
+| xremail-message | MIME 结构、charset 解码、RFC 5322 头 | 不落库、不加载远程资源；**不做 HTML 清洗**（清洗在 `xremail-core::html`，见 §9.1） |
 | xremail-provider | 可覆盖预设、接入诊断 | 企业邮箱需管理员配置，不能按品牌猜服务器 |
 | xremail-crypto | 成熟密码库封装、版本化密文格式 | 不自行实现密码算法；不承担所有平台钥匙串职责 |
 | 平台 SecretStore 适配器 | Windows/Android 等安全存储 | 与可选远端 VaultStore 分离 |
@@ -289,6 +289,23 @@ QQ 要 **30–90 秒**才落盘（第一次实测查得太早，误记成「QQ �
 元数据变化、正文晚到/替换、删除、UID epoch 重建都要更新投影。提供可重复 rebuild 与一致性检查。
 trigram 对不足三个字符的检索有限制，中文短词采用有界 LIKE 回退或明确 UI 限制，不能假装具备完整中文分词。
 
+**已实现（2026-10-30，迁移 `0004_message_search.sql` + `crates/xremail-store/src/dao/search.rs`）**：
+投影是 `message_search_doc`（一封邮件一行：标题 / 收发件人 / 纯文本正文），
+倒排索引用 FTS5 **外部内容表** `message_search_fts`（`tokenize='trigram'`），
+正文只在文档表存一份。
+
+与上面的设计有一处**故意的偏离**：索引**不由 DAO 事务维护**，而是交给
+**数据库触发器**（`message` / `message_body` 的增删改 → 文档表 → FTS 表）。
+理由是 epoch 切换、级联删除、导库这些路径**不经过应用代码**，
+DAO 事务维护的索引会在那些路径上脱节；触发器是**任何写入路径都绕不过**的。
+`rebuild_index`（可重复）与 `check_index_consistency`（查漏索引 / 孤儿行 / 正文过期）
+作为兜底，正常路径用不上。
+
+**只索引 `text_plain`，不索引 `html_raw`**：原始 HTML 里的标签、样式、内联脚本是噪音，
+命中会被标签切碎，片段也是一堆尖括号。
+**短词回退**：查询词里有 1~2 字符的词时，trigram 切不出词元（实测 `MATCH '"项目"'` 命中 0），
+DAO 层退化成 `LIKE` **子串**扫描——这与用户输「项目」的直觉一致，代价是全表扫描。
+
 ## 8. L2 预留的最小范围
 
 P0 按既定决策保留接口与 schema，但不建设远端服务：
@@ -329,6 +346,24 @@ Linux/macOS/iOS 不属于当前验收平台，不因 Tauri 支持就视为产品
 错误附加上下文时必须保留错误变体，否则 `is_retryable()` / `requires_user_action()` 判定失效。
 `AppError::with_context` 按变体逐个包裹，`Context::ctx` 基于它实现，已有单测锁定该行为。
 `panic = "abort"` 意味着后台任务无法用 `catch_unwind` 兜底，单个同步 task 的 panic 会终止整个应用；取舍见 [ISSUES_AND_RISKS R13](ISSUES_AND_RISKS.md)。
+
+### 9.1 HTML 正文的安全边界（R06）
+
+邮件正文一律**不可信**。**清洗在后端完成**（`xremail_core::html::sanitize_html`），
+出后端的只有清洗过的 `htmlSafe`——**原始 HTML 不出后端**（`MessageBodyView` 只带 `htmlSafe`）。
+前端用 `dangerouslySetInnerHTML` 渲染它，所以**安全边界就是后端那道消毒**；
+消毒器的白名单因此在 core 层维护，用例锁住（`crates/xremail-core/src/html.rs`）。
+
+消毒规则：标签白名单 + 属性白名单；`script` / `style` / `iframe` / `object` / `embed` /
+`form` 等**连内容一起删**（它们的内容本身就是载荷）；删 `on*` 事件属性与
+`javascript:` / `data:` 协议；删**远程图片**（`src` 指向 http/https）——
+远程图片是**跟踪像素**与**信息泄露**的通道。
+其余**未知标签只删标签、留着内容**：真实邮件的正文全都被 `html` / `body` 包着，
+连内容一起删的话整封信就没了。
+
+正文只有 `text/html` 时，**从 HTML 派生纯文本**（`html_to_text`），
+写入时派生、启动时回填老数据：实测 163 的邮件大多只有 `text/html`，
+只认纯文本的话这类邮件**搜不到**也读不出来（见 §7）。
 
 ## 10. 性能预算与复审
 

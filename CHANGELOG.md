@@ -7,6 +7,62 @@
 ## [Unreleased]
 
 ### Added
+- **撰写面板（能真正写一封信）**（2026-10-30）
+  - **前端**（`apps/shell/src/components/ComposePanel.tsx`、
+    `RichTextEditor.tsx`、`ComposePanel.css`）：
+    收件人 / 抄送 / 主题 / 正文（**富文本**，粗体、斜体、下划线、
+    有序无序列表、链接、清除格式），**草稿保存**、**撤回草稿**、**发送**
+  - **富文本编辑器是自写的**（`contenteditable` + `document.execCommand`），
+    **不引入新依赖**（本项目的硬约束：前端不加依赖）
+  - **后端**：`save_draft` / `list_drafts` / `get_draft` / `withdraw_draft`
+    四个命令 + `service/compose.rs` 的草稿读写
+  - **发送前校验**：收件人地址（`xremail-core::address::validate_addresses`）
+    与附件限制（`xremail-core::attachment::check_attachment_limits_all`），
+    **后端为准**——前端校验只是提前拦一下，绕过前端也拦得住
+  - **后端会改写寄件人**：`from` 永远取账户地址，附件里的
+    `Message-ID`/`Date` 不可信，**以实际提交的那封为准**
+  - 前端用例 6 个文件（撰写、地址校验、附件限制、草稿、富文本、`uncertain` 结局）
+- **本地全文搜索**（2026-10-30）
+  - **为什么在本地搜**：远端 IMAP 的搜索不可靠——163 的 UID SEARCH 只认 ALL，
+    其它关键字**静默失效**（已知风险 R23），所以搜索必须落在本地缓存上
+  - **存储层**（`crates/xremail-store/src/dao/search.rs` +
+    迁移 `0004_message_search.sql`）：
+    - `message_search_doc` 文档表（一封邮件一行：标题 / 收发件人 / 纯文本正文）
+      + `message_search_fts` FTS5 **外部内容表**（倒排索引单独存放，正文不存两遍）
+    - **分词器用 trigram**：中文正文没有空格，默认的 unicode61 会把整句中文
+      当成**一个词**，「项目进度」搜不到「进度」；trigram 按 3 字符滑窗切分
+    - **索引由触发器维护**：`message` / `message_body` 的写入与删除
+      **自动**同步到索引，因此 epoch 切换、级联删除这些不经过应用代码的路径
+      也不会留下脱节的索引
+    - **短词回退**：trigram 服务不了 1~2 字符的词（「项目」），
+      DAO 层退化成 `LIKE` 子串扫描（个人邮箱量级可接受）
+    - **查询词按字面匹配**：每个词包成 FTS5 字符串字面量，
+      用户输入的 `OR` / `*` / `-` 不会被当成 FTS5 语法
+    - `rebuild_index`（**可重复**）与 `check_index_consistency`（查脱节）——
+      兜底用，正常路径靠触发器
+  - **前端**：`apps/shell/src/components/SearchPanel.tsx`
+    （搜索框 + 命中片段，命中词用 `**` 标出）
+  - 用例：存储层 21 个、前端 1 个文件
+- **HTML 正文能看也能搜**（2026-10-30）
+  - **纯函数消毒器**（`crates/xremail-core/src/html.rs`）：
+    白名单标签 + 属性白名单、删 `script` / `style` / `iframe` / `on*` 事件
+    与 `javascript:` 协议、删远程图片（防跟踪像素）；
+    **未知标签只删标签、留着内容**——真实邮件的正文全都被
+    `html` / `body` 包着，连内容一起删整封信就没了
+  - **消毒在出后端前完成**：`MessageBodyView` 只带 `htmlSafe`，
+    **原始 HTML 不出后端**（后端序列化结果里查不到 `htmlRaw`）
+  - **HTML-only 邮件也有纯文本**：真实邮箱（实测 163）的邮件**大多只有
+    `text/html`**，`text/plain` 是空的——只认纯文本的话，
+    这类邮件**一个字都搜不到**、正文也读不出来。
+    现在写入正文时缺纯文本会**从 HTML 派生**一份，
+    启动时还会**回填**升级前入库的老邮件
+  - **派生不覆盖原文**：已经有纯文本的邮件**原样保留**
+  - **前端按 HTML 显示正文**（`apps/shell/src/components/MessageView.tsx`）：
+    之前是把源码**打印出来**（当时没有消毒器，渲染等于给邮件一个 XSS 口子）；
+    现在渲染的是消毒过的 `htmlSafe`，标签是真的元素不是转义文本
+  - **正文里的链接交给系统浏览器**（`@tauri-apps/plugin-opener`）：
+    不让应用自己跳——邮件内容不可信，让 webview 跳会把整个应用窗口
+    换成那个网页；协议也只放行 `http(s)` / `mailto`
 - **IMAP `APPEND`（发信存副本）**（2026-10-30）
   - **协议层**：`crates/xremail-protocol-imap/src/append.rs`
     （命令编码 + 逐行解析字面量应答）、`AppendOptions{flags,internal_date}`、
