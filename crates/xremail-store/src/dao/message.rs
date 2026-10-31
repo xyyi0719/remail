@@ -13,6 +13,7 @@
 use sqlx::FromRow;
 use sqlx::SqlitePool;
 use xremail_core::AppResult;
+use xremail_core::html::html_to_text;
 use xremail_core::model::{Message, MessageBody};
 
 use crate::codec::{addresses_from_json, addresses_to_json};
@@ -344,7 +345,24 @@ struct MessageBodyRow {
 ///
 /// 正文**单独存**——列文件夹时不会碰到大文本列
 /// （见 [ARCHITECTURE §4.2](../../../../docs/ARCHITECTURE.md)）。
+///
+/// ## 纯文本缺失时从 HTML 派生
+///
+/// 真实邮箱发出来的邮件**大多是 HTML-only**（实测 163：纯文本部分为空）。
+/// 不派生的话，这封邮件的正文**一个字都搜不到**——搜索等于只搜标题。
+///
+/// 派生出来的文本会跟着 FTS 触发器进索引（`message_search_body_ai` /
+/// `message_search_body_au`），所以这里写进去就够了，索引那边**不用管**。
 pub async fn upsert_message_body(pool: &SqlitePool, body: &MessageBody) -> AppResult<()> {
+    let text_plain = match body.text_plain.as_deref() {
+        Some(text) if !text.trim().is_empty() => body.text_plain.clone(),
+        _ => body
+            .html_raw
+            .as_deref()
+            .map(html_to_text)
+            .filter(|text| !text.trim().is_empty()),
+    };
+
     sqlx::query!(
         r#"
         INSERT INTO message_body (message_id, text_plain, html_raw, charset)
@@ -355,7 +373,7 @@ pub async fn upsert_message_body(pool: &SqlitePool, body: &MessageBody) -> AppRe
             charset    = excluded.charset
         "#,
         body.message_id,
-        body.text_plain,
+        text_plain,
         body.html_raw,
         body.charset,
     )
@@ -364,6 +382,58 @@ pub async fn upsert_message_body(pool: &SqlitePool, body: &MessageBody) -> AppRe
     .map_err(|e| map_sqlx(e, "upsert_message_body"))?;
 
     Ok(())
+}
+
+/// 给**已有**的 HTML-only 邮件补派生文本。
+///
+/// 写路径已经会派生（见 [`upsert_message_body`]），但那规则是后加的——
+/// **升级之前**就入库的邮件 `text_plain` 仍然是空的，搜不到。
+///
+/// 启动时补一次：只碰「HTML 有、纯文本空」的行，
+/// 正常邮件一个都不动。
+///
+/// 更新 `message_body` 会触发 `message_search_body_au`，
+/// 索引里的正文**跟着一起补上**。
+///
+/// 返回补了多少封。
+pub async fn backfill_derived_text(pool: &SqlitePool) -> AppResult<usize> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT message_id, html_raw
+        FROM message_body
+        WHERE html_raw IS NOT NULL
+          AND (text_plain IS NULL OR TRIM(text_plain) = '')
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "backfill_derived_text.select"))?;
+
+    let mut patched = 0usize;
+    for row in rows {
+        let Some(html) = row.html_raw.as_deref() else {
+            continue;
+        };
+        let text = html_to_text(html);
+        if text.trim().is_empty() {
+            continue;
+        }
+        sqlx::query!(
+            r#"
+            UPDATE message_body
+            SET text_plain = ?
+            WHERE message_id = ?
+            "#,
+            text,
+            row.message_id,
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| map_sqlx(e, "backfill_derived_text.update"))?;
+        patched += 1;
+    }
+
+    Ok(patched)
 }
 
 /// 取一封邮件的正文。

@@ -10,7 +10,7 @@
  * - 没写收件人时会不会白跑一趟。
  */
 import { act, screen } from "@testing-library/react";
-import { createBackend } from "../test/backend";
+import { createBackend, fakeFilePicker } from "../test/backend";
 import { makeAccount } from "../test/fixtures";
 import type { AppHarness } from "../test/harness";
 import { ACCOUNT_EMAIL, renderApp, settle } from "../test/harness";
@@ -182,13 +182,15 @@ describe("写信界面", () => {
     ).toBeInTheDocument();
   });
 
-  it("选中的附件会把文件名带给后端", async () => {
+  it("选中的附件会把路径和文件名带给后端", async () => {
     const backend = backendWithAccount();
     const { user } = await renderApp(backend);
     await openCompose(user);
 
-    const file = new File(["附件内容"], "报告.txt", { type: "text/plain" });
-    await user.upload(screen.getByLabelText("附件"), file);
+    // 附件改成走**路径**（后端自己读文件），所以这里 mock 的是
+    // Tauri 的文件选择框，不是 `<input type="file">`。
+    fakeFilePicker(["/tmp/报告.txt"]);
+    await user.click(screen.getByRole("button", { name: "添加附件" }));
     await settle();
 
     expect(screen.getByText("报告.txt")).toBeInTheDocument();
@@ -201,8 +203,11 @@ describe("写信界面", () => {
     expect(calls).toHaveLength(1);
     const draft = draftOf(calls[0]);
     expect(draft.attachments).toHaveLength(1);
-    expect(draft.attachments[0].filename).toBe("报告.txt");
-    expect(draft.attachments[0].contentType).toBe("text/plain");
+    expect(draft.attachments[0].name).toBe("报告.txt");
+    expect(draft.attachments[0].path).toBe("/tmp/报告.txt");
+    // 前端拿不到真实大小（`open()` 只给路径），先填 0，
+    // 真实大小由后端读文件后回填。
+    expect(draft.attachments[0].size).toBe(0);
   });
 
   it("明确失败时给出错误提示，而且还能再发一次", async () => {

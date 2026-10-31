@@ -4,6 +4,7 @@ import ComposePanel from "./components/ComposePanel";
 import FolderList from "./components/FolderList";
 import MessageList from "./components/MessageList";
 import MessageView from "./components/MessageView";
+import SearchPanel, { type SearchHit } from "./components/SearchPanel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -50,6 +51,12 @@ function App() {
   // 写信面板：存的是**打开面板时**那个账户的 id——
   // 用户中途换账户的话，面板里的收件人还是按开面板时的身份准备的。
   const [composeAccountId, setComposeAccountId] = useState<string | null>(null);
+
+  // 待打开的搜索命中。
+  //
+  // 搜索结果点开后要“先切账户 → 再切文件夹 → 再等邮件列表加载完 → 才能打开邮件”，
+  // 中间隔着两次异步加载，所以先把目标记在这儿，等列表到了再兑现。
+  const [pendingOpen, setPendingOpen] = useState<SearchHit | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -118,6 +125,25 @@ function App() {
       .then(setMessages)
       .catch((e) => setError(String(e)));
   }, [accountId, folderId]);
+
+  // 点开一条搜索命中：切到对应的账户与文件夹，等列表到了再打开那封邮件。
+  const handleOpenHit = useCallback((hit: SearchHit) => {
+    setPendingOpen(hit);
+    setAccountId(hit.accountId);
+    setFolderId(hit.folderId);
+  }, []);
+
+  // 邮件列表加载完 → 兑现“待打开的命中”。
+  useEffect(() => {
+    if (!pendingOpen || folderId !== pendingOpen.folderId || messages.length === 0) {
+      return;
+    }
+    const found = messages.find((item) => item.uid === pendingOpen.uid);
+    if (found) {
+      setMessage(found);
+      setPendingOpen(null);
+    }
+  }, [pendingOpen, folderId, messages]);
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -263,6 +289,8 @@ function App() {
       )}
 
       <AccountForm />
+
+      <SearchPanel onOpen={handleOpenHit} onError={handleError} />
 
       {accounts === null ? (
         <p className="app-loading">加载中…</p>

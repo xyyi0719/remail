@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Message, MessageBody } from "../types";
 import { isUnread } from "../types";
 
@@ -15,14 +16,22 @@ interface Props {
 /**
  * 邮件正文。
  *
- * ## 为什么 HTML 只显示源码
+ * ## 为什么可以渲染 HTML
  *
- * 邮件的 HTML **未经清洗**（ARCHITECTURE §7 规定的清洗器还没做，
- * 见 ISSUES_AND_RISKS R06）。直接渲染等于给邮件内容一个 XSS 口子，
- * 所以这里**不渲染**，只把源码显示出来。
+ * 渲染的是**后端消毒过的** HTML（`htmlSafe`），不是原始邮件正文：
+ * 消毒在后端完成（`xremail-core::html`），脚本、事件处理器、
+ * 远程图片都已经没了，**原始 HTML 根本不出后端**（ARCHITECTURE §9.1）。
+ * 前端再渲染一次，等于让邮件内容拿到一个 XSS 口子。
  *
  * 真实情况：国内服务商的邮件**大多是 HTML-only**（没有 text/plain），
- * 实测 163 / QQ / 沃三家的抽样邮件纯文本都是 0 字。所以这条路径不是边角情况。
+ * 实测 163 / QQ / 沃三家的抽样邮件纯文本都是 0 字。
+ * 只显示源码的话，这类邮件等于**读不了**。
+ *
+ * ## 为什么链接不让应用自己跳
+ *
+ * 邮件里的 `<a href="https://…">` 一旦让 webview 自己跳，
+ * 整个应用窗口就被那个网页顶掉了——用户的邮件客户端**没了**。
+ * 所以正文里的链接一律交给**系统浏览器**打开（`opener` 插件）。
  *
  * ## 为什么打开邮件不自动标记已读
  *
@@ -72,7 +81,29 @@ function MessageView({
   }, [accountId, folderId, message.uid, onError]);
 
   const plain = body?.textPlain ?? null;
-  const html = body?.htmlRaw ?? null;
+  const html = body?.htmlSafe ?? null;
+
+  /**
+   * 正文里的链接一律交给系统浏览器。
+   *
+   * 邮件内容不可信：让 webview 自己跳会把整个应用窗口换成那个网页。
+   * 这里 `preventDefault` 掉，然后交给 `opener` 插件开系统浏览器。
+   */
+  const handleBodyClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (event.target as HTMLElement).closest("a");
+    const href = anchor?.getAttribute("href");
+    if (!href) {
+      return;
+    }
+    // 不管什么链接都不让应用自己跳。
+    event.preventDefault();
+    if (!/^(https?:|mailto:)/i.test(href)) {
+      return;
+    }
+    void openUrl(href).catch(() => {
+      // 打开失败（比如系统没有浏览器）不该把整个应用搞崩。
+    });
+  };
 
   return (
     <section className="panel">
@@ -97,19 +128,19 @@ function MessageView({
 
       {loading && <p className="panel-empty">正在取正文…</p>}
 
-      {!loading && plain && <pre className="message-body">{plain}</pre>}
-
-      {!loading && !plain && html && (
-        <>
-          <p className="panel-empty">
-            这封邮件只有 HTML 版本（纯文本为空）。HTML 清洗器还没做，
-            所以下面显示的是**源码**，不是渲染结果。
-          </p>
-          <pre className="message-body">{html}</pre>
-        </>
+      {!loading && html && (
+        // 消毒过的 HTML：标签与属性都在白名单里，
+        // 脚本、事件处理器、远程图片都没了（ARCHITECTURE §9.1）。
+        <div
+          className="message-body message-body-html"
+          onClick={handleBodyClick}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       )}
 
-      {!loading && !plain && !html && (
+      {!loading && !html && plain && <pre className="message-body">{plain}</pre>}
+
+      {!loading && !html && !plain && (
         <p className="panel-empty">这封邮件没有正文。</p>
       )}
     </section>

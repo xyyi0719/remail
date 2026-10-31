@@ -31,6 +31,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use xremail_api::SecretValue;
+use xremail_core::address::validate_addresses;
+use xremail_core::attachment::{AttachmentInput, check_attachment_limits_all};
 use xremail_core::model::{Account, SendAttachment, SendQueueEntry, SendState, TlsMode};
 use xremail_core::{AppError, AppResult};
 use xremail_message::compose::{BuildOptions, OutgoingMessage, build_message};
@@ -78,18 +80,44 @@ pub struct DraftInput {
     pub attachments: Vec<DraftAttachment>,
 }
 
-/// 一个附件（前端传字节数组，后端转 base64 存库）。
+/// 一个附件（前端传**路径**，字节由后端读）。
+///
+/// ## 为什么不让前端传字节
+///
+/// 几十 MB 的文件读成 `number[]` 塞进 IPC 参数，参数体直接被撑爆
+/// （而且还得 base64 来回一趟）。传路径、后端自己读文件，
+/// 参数体与前端内存都小得多。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftAttachment {
+    /// 文件名（显示用）。
+    pub name: String,
+    /// MIME 类型（前端可能给空串；后端会按扩展名兜底）。
+    #[serde(default)]
+    pub mime: String,
+    /// 前端看到的字节数（**可能不准**——后端读完文件后会用真实大小覆盖）。
+    #[serde(default)]
+    pub size: u64,
+    /// 本机绝对路径。
+    ///
+    /// **空串**表示「这是已存草稿里的附件，字节在库里」：
+    /// 前端回填草稿时拿不到路径，后端按文件名复用库里那份字节。
+    #[serde(default)]
+    pub path: String,
+}
+
+/// 附件的样子（给前端看的）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftAttachmentDto {
     /// 文件名。
-    pub filename: String,
+    pub name: String,
     /// MIME 类型。
-    #[serde(default)]
-    pub content_type: String,
-    /// 文件内容。
-    #[serde(default)]
-    pub bytes: Vec<u8>,
+    pub mime: String,
+    /// 真实字节数。
+    pub size: u64,
+    /// 已存草稿的附件没有路径（字节在库里）→ 空串。
+    pub path: String,
 }
 
 /// 草稿（给前端看的形状）。
@@ -123,6 +151,65 @@ impl DraftDto {
     }
 }
 
+/// 草稿全文（给「接着上次那封改」用）。
+///
+/// 与 [`DraftDto`] 的区别：这里带**正文与附件**，
+/// 前端要能把它整个填回编辑区。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftDetail {
+    /// 草稿 id。
+    pub id: String,
+    /// 所属账户。
+    pub account_id: String,
+    /// 主题。
+    pub subject: String,
+    /// 收件人。
+    pub to: Vec<String>,
+    /// 抄送。
+    pub cc: Vec<String>,
+    /// 密送。
+    pub bcc: Vec<String>,
+    /// 当前状态。
+    pub state: String,
+    /// 最后修改时间（epoch 毫秒）。
+    pub updated_at: i64,
+    /// 纯文本正文。
+    pub body_text: String,
+    /// HTML 正文。
+    pub body_html: Option<String>,
+    /// 附件（**不含字节**——前端只要名字与大小）。
+    pub attachments: Vec<DraftAttachmentDto>,
+}
+
+impl DraftDetail {
+    fn from_domain(entry: &SendQueueEntry) -> Self {
+        Self {
+            id: entry.id.clone(),
+            account_id: entry.account_id.clone(),
+            subject: entry.subject.clone(),
+            to: entry.to.clone(),
+            cc: entry.cc.clone(),
+            bcc: entry.bcc.clone(),
+            state: entry.state.as_str().to_string(),
+            updated_at: entry.updated_at,
+            body_text: entry.body_text.clone().unwrap_or_default(),
+            body_html: entry.body_html.clone(),
+            attachments: entry
+                .attachments
+                .iter()
+                .map(|attachment| DraftAttachmentDto {
+                    name: attachment.filename.clone(),
+                    mime: attachment.content_type.clone(),
+                    size: attachment.bytes.len() as u64,
+                    // 字节在库里，没有路径可给。
+                    path: String::new(),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// 发送结果的状态。
 ///
 /// 三个值的含义**互不相同**，界面上必须分开说（见 `types.ts` 的 `SendResult`）。
@@ -143,6 +230,11 @@ pub enum SendResultState {
 pub struct SendResult {
     /// 邮件的 Message-ID（含尖括号）。
     pub message_id: String,
+    /// 发信条目 id。
+    ///
+    /// 前端要拿它才能做「撤回重发」这类后续操作
+    /// （`uncertain` 时不知道服务器收没收到，得靠这个 id 去查）。
+    pub entry_id: String,
     /// 三种结局之一。
     pub state: SendResultState,
     /// 给用户看的一句话说明。
@@ -217,7 +309,9 @@ impl ComposeService {
     /// 用户看到的和实际发出去的就不是同一封了。
     pub async fn save_draft(&self, input: &DraftInput) -> AppResult<DraftDto> {
         let account = self.require_account(&input.account_id).await?;
-        let entry = self.build_entry(input, &account);
+        let id = draft_id(input);
+        let attachments = self.resolve_attachments(input, &id).await?;
+        let entry = self.build_entry(input, &account, attachments);
         let id = entry.id.clone();
 
         let saved = send_queue_dao::save_draft(&self.pool, &entry).await?;
@@ -241,8 +335,25 @@ impl ComposeService {
         credential: &SecretValue,
     ) -> AppResult<SendResult> {
         let account = self.require_account(&input.account_id).await?;
-        let entry = self.build_entry(input, &account);
+        let id = draft_id(input);
+        let attachments = self.resolve_attachments(input, &id).await?;
+        let entry = self.build_entry(input, &account, attachments);
         let id = entry.id.clone();
+
+        // 地址校验放在**最前面**——地址不合法的话，
+        // 后面每一步（落草稿、构建字节、提交）都是白做。
+        //
+        // 前端也会校验一份，但前端能被绕过（IPC 可以直接调），
+        // 所以后端必须自己守一道。
+        check_recipient_addresses(&entry)?;
+
+        // 至少要有一个收件人。
+        //
+        // 只抄送不收件在 RFC 上合法，但在邮件客户端里几乎总是手滑，
+        // 与其发出去让用户后悔，不如在这里问一句。
+        if entry.to.is_empty() && entry.cc.is_empty() && entry.bcc.is_empty() {
+            return Err(AppError::Invalid("至少要填一个收件人".to_string()));
+        }
 
         // 1) 落草稿。存不进去说明这封信已经不在草稿态了（已发出 / 未确认）。
         let saved = send_queue_dao::save_draft(&self.pool, &entry).await?;
@@ -377,6 +488,45 @@ impl ComposeService {
             .await
     }
 
+    /// 列出某账户的**草稿**（只列 `draft` 状态）。
+    ///
+    /// 排队中 / 结果未确认的那些**不算**草稿——
+    /// 它们的内容已经冻结了，不能当草稿改。
+    pub async fn list_drafts(&self, account_id: &str) -> AppResult<Vec<DraftDto>> {
+        let entries = send_queue_dao::list_entries(&self.pool, account_id).await?;
+        Ok(entries
+            .iter()
+            .filter(|entry| entry.state == SendState::Draft)
+            .map(DraftDto::from_domain)
+            .collect())
+    }
+
+    /// 取一份草稿的全文（给「接着上次那封改」用）。
+    ///
+    /// 不是草稿（比如已经发出去了）就报错——
+    /// 让用户以为能改、实际改了没用，比直接报错更糟。
+    pub async fn get_draft(&self, id: &str) -> AppResult<DraftDetail> {
+        let entry = send_queue_dao::get_entry(&self.pool, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("草稿 {id} 不存在")))?;
+        if entry.state != SendState::Draft {
+            return Err(AppError::Invalid(format!(
+                "这条发信记录已经不是草稿了（状态 {}），不能当草稿改",
+                entry.state.as_str()
+            )));
+        }
+        Ok(DraftDetail::from_domain(&entry))
+    }
+
+    /// 把「结果未确认」的信撤回来继续改。
+    ///
+    /// **这是用户的判断，不是自动重试**——前端要弹二次确认，
+    /// 因为万一服务器其实已经收下了，改完再发就变成两封。
+    pub async fn withdraw_draft(&self, id: &str) -> AppResult<bool> {
+        let now = current_time_ms();
+        send_queue_dao::withdraw_to_draft(&self.pool, id, now).await
+    }
+
     /// 列出某账户还**没发出去**的信（草稿 / 已排队 / 结果未确认）。
     pub async fn list_pending(&self, account_id: &str) -> AppResult<Vec<DraftDto>> {
         let entries = send_queue_dao::list_entries(&self.pool, account_id).await?;
@@ -400,13 +550,14 @@ impl ComposeService {
     /// 把前端传来的草稿组装成领域模型。
     ///
     /// **不落库**——落库由调用方决定（保存草稿 / 发送）。
-    fn build_entry(&self, input: &DraftInput, account: &Account) -> SendQueueEntry {
+    fn build_entry(
+        &self,
+        input: &DraftInput,
+        account: &Account,
+        attachments: Vec<SendAttachment>,
+    ) -> SendQueueEntry {
         let now = current_time_ms();
-        let id = input
-            .id
-            .clone()
-            .filter(|id| !id.trim().is_empty())
-            .unwrap_or_else(new_operation_id);
+        let id = draft_id(input);
 
         SendQueueEntry {
             id: id.clone(),
@@ -417,16 +568,17 @@ impl ComposeService {
             bcc: clean_addresses(&input.bcc),
             subject: input.subject.clone(),
             body_text: Some(input.body_text.clone()).filter(|text| !text.is_empty()),
-            body_html: input.body_html.clone().filter(|html| !html.is_empty()),
-            attachments: input
-                .attachments
-                .iter()
-                .map(|attachment| SendAttachment {
-                    filename: attachment.filename.clone(),
-                    content_type: attachment.content_type.clone(),
-                    bytes: attachment.bytes.clone(),
-                })
-                .collect(),
+            // 出站 HTML **在这里**消毒一次。
+            //
+            // 前端也有一份消毒（编辑器里的），但前端能被绕过（IPC 可以直接调），
+            // 后端必须自己守一道——不然一个绕过前端的调用就能把
+            // `<script>` 之类的内容发出去。
+            body_html: input
+                .body_html
+                .as_deref()
+                .map(xremail_core::html::sanitize_html)
+                .filter(|html| !html.is_empty()),
+            attachments,
             in_reply_to: None,
             references: None,
             state: SendState::Draft,
@@ -439,6 +591,72 @@ impl ComposeService {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// 把前端传来的附件（**路径**）变成能存库的字节。
+    ///
+    /// ## 两种来源
+    ///
+    /// - **有路径**：新选的文件 → 后端自己读（顺便查大小上限）。
+    /// - **没路径**：已存草稿里的附件 → 字节已经在库里，按文件名复用。
+    ///
+    /// 复用按**文件名**匹配：附件没有别的稳定标识，
+    /// 而前端回填草稿时也不会给附件改名。
+    async fn resolve_attachments(
+        &self,
+        input: &DraftInput,
+        id: &str,
+    ) -> AppResult<Vec<SendAttachment>> {
+        let stored = send_queue_dao::list_attachments(&self.pool, id).await?;
+        let mut resolved = Vec::with_capacity(input.attachments.len());
+
+        for attachment in &input.attachments {
+            let path = attachment.path.trim();
+            if path.is_empty() {
+                if let Some(found) = stored
+                    .iter()
+                    .find(|saved| saved.filename == attachment.name)
+                {
+                    resolved.push(found.clone());
+                }
+                continue;
+            }
+            let bytes = read_attachment_file(path, &attachment.name).await?;
+            resolved.push(SendAttachment {
+                filename: attachment.name.clone(),
+                content_type: if attachment.mime.trim().is_empty() {
+                    guess_content_type(&attachment.name)
+                } else {
+                    attachment.mime.clone()
+                },
+                bytes,
+            });
+        }
+
+        // 限额检查：个数 / 单个大小 / 总大小 / 扩展名黑名单。
+        //
+        // **在入库之前**做：超限的附件不该被冻进草稿字节里。
+        // 上面的 `read_attachment_file` 只挡了「单个太大」（读之前先看大小），
+        // 剩下的规则归 core 管（前后端引用同一处限额）。
+        let inputs: Vec<AttachmentInput> = resolved
+            .iter()
+            .map(|attachment| {
+                AttachmentInput::new(attachment.filename.clone(), attachment.bytes.len() as u64)
+                    .with_mime(attachment.content_type.clone())
+            })
+            .collect();
+        let problems = check_attachment_limits_all(&inputs);
+        if !problems.is_empty() {
+            return Err(AppError::Invalid(
+                problems
+                    .iter()
+                    .map(|problem| problem.to_string())
+                    .collect::<Vec<_>>()
+                    .join("；"),
+            ));
+        }
+
+        Ok(resolved)
     }
 
     /// MIME 构建选项。
@@ -546,6 +764,7 @@ impl ComposeService {
                     message_id: stored
                         .and_then(|entry| entry.message_id)
                         .unwrap_or_else(|| fallback_message_id.to_string()),
+                    entry_id: entry_id.to_string(),
                     state: SendResultState::Failed,
                     detail: text,
                 });
@@ -591,6 +810,7 @@ impl ComposeService {
 
         Ok(SendResult {
             message_id,
+            entry_id: entry_id.to_string(),
             state,
             detail,
         })
@@ -812,4 +1032,91 @@ fn describe_outcome(
         parts.push(error.to_string());
     }
     parts.join("；")
+}
+
+/// 草稿 id：前端给了就用，没给就新生成一个。
+fn draft_id(input: &DraftInput) -> String {
+    input
+        .id
+        .clone()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(new_operation_id)
+}
+
+/// 单个附件的大小上限（10 MiB）。
+///
+/// 转发自 [`xremail_core::attachment::MAX_ATTACHMENT_BYTES`]：
+/// 限额本身归 core 管（前后端、前后端与服务层都引用同一处）。
+const MAX_ATTACHMENT_BYTES: u64 = xremail_core::attachment::MAX_ATTACHMENT_BYTES;
+
+/// 读一个附件文件。
+///
+/// **先查大小再读**：不然一个几百 MB 的文件会把内存吃光，
+/// 而且用户等的是「已发送」，不是「进程被杀了」。
+async fn read_attachment_file(path: &str, name: &str) -> AppResult<Vec<u8>> {
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| AppError::Invalid(format!("读不到附件「{name}」（{path}）：{e}")))?;
+    if !metadata.is_file() {
+        return Err(AppError::Invalid(format!("附件「{name}」不是普通文件")));
+    }
+    if metadata.len() > MAX_ATTACHMENT_BYTES {
+        return Err(AppError::Invalid(format!(
+            "附件「{name}」有 {:.1} MiB，超过上限 {:.0} MiB",
+            metadata.len() as f64 / 1024.0 / 1024.0,
+            MAX_ATTACHMENT_BYTES as f64 / 1024.0 / 1024.0
+        )));
+    }
+    tokio::fs::read(path)
+        .await
+        .map_err(|e| AppError::Invalid(format!("读不了附件「{name}」（{path}）：{e}")))
+}
+
+/// 校验收件人地址（To / Cc / Bcc）。
+///
+/// **一次报出所有问题**：用户改一个、提交一次、再改一个，体验极差。
+fn check_recipient_addresses(entry: &SendQueueEntry) -> AppResult<()> {
+    let mut all: Vec<&String> = Vec::new();
+    all.extend(entry.to.iter());
+    all.extend(entry.cc.iter());
+    all.extend(entry.bcc.iter());
+
+    match validate_addresses(&all) {
+        Ok(_) => Ok(()),
+        Err(problems) => Err(AppError::Invalid(
+            problems
+                .iter()
+                .map(|problem| problem.to_string())
+                .collect::<Vec<_>>()
+                .join("；"),
+        )),
+    }
+}
+
+/// 按扩展名猜 MIME 类型。
+///
+/// 文件选择器不一定报得出类型（后端拿到的可能只是路径），
+/// 而 MIME 类型决定对方客户端怎么显示这个附件——
+/// 猜错成 `application/octet-stream` 的话，图片会变成一个附件块。
+fn guess_content_type(name: &str) -> String {
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_stem, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    let guessed = match extension.as_str() {
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "zip" => "application/zip",
+        _ => "application/octet-stream",
+    };
+    guessed.to_string()
 }

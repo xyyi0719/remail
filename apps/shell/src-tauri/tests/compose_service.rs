@@ -428,6 +428,7 @@ fn send_result_serializes_the_way_the_frontend_expects() {
     ] {
         let value = serde_json::to_value(SendResult {
             message_id: "<m1@example.com>".to_string(),
+            entry_id: "e1".to_string(),
             state,
             detail: "说明".to_string(),
         })
@@ -435,10 +436,203 @@ fn send_result_serializes_the_way_the_frontend_expects() {
 
         assert_eq!(value["state"], expected);
         assert_eq!(value["messageId"], "<m1@example.com>");
+        assert_eq!(value["entryId"], "e1");
         assert_eq!(value["detail"], "说明");
         assert!(
             !value.as_object().unwrap().contains_key("message_id"),
             "出现了 snake_case 字段名，前端读不到"
         );
     }
+}
+
+// ------------------------------------------------------------------ 地址校验
+
+#[tokio::test]
+async fn an_invalid_recipient_address_is_rejected_before_anything_is_sent() {
+    let (fixture, server) = Fixture::with_server(secure_config()).await;
+
+    let mut input = draft(&fixture.account_id);
+    input.to = vec!["not-an-address".to_string()];
+
+    let error = fixture
+        .service
+        .send(&input, &credential())
+        .await
+        .expect_err("地址不合法就不该发出去");
+
+    let text = error.to_string();
+    assert!(
+        text.contains("not-an-address"),
+        "错误里要点名是哪个地址不对，实际是：{text}"
+    );
+    assert!(
+        server.messages().is_empty(),
+        "地址没通过校验就不该有任何东西发出去"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn all_bad_addresses_are_reported_at_once() {
+    // 一次改一个、提交一次、再改一个——体验极差。
+    let fixture = Fixture::offline().await;
+
+    let mut input = draft(&fixture.account_id);
+    input.to = vec!["坏地址".to_string(), "另一个坏地址".to_string()];
+
+    let error = fixture
+        .service
+        .send(&input, &credential())
+        .await
+        .expect_err("地址不合法就不该发出去");
+
+    let text = error.to_string();
+    assert!(text.contains("坏地址"), "实际是：{text}");
+    assert!(text.contains("另一个坏地址"), "实际是：{text}");
+}
+
+#[tokio::test]
+async fn sending_without_any_recipient_is_rejected() {
+    let fixture = Fixture::offline().await;
+
+    let mut input = draft(&fixture.account_id);
+    input.to = vec![];
+    input.cc = vec![];
+    input.bcc = vec![];
+
+    let error = fixture
+        .service
+        .send(&input, &credential())
+        .await
+        .expect_err("没有收件人就不该发出去");
+
+    assert!(error.to_string().contains("收件人"), "实际是：{error}");
+}
+
+// ------------------------------------------------------------------ 附件限额
+
+#[tokio::test]
+async fn a_blocked_attachment_extension_is_rejected() {
+    let fixture = Fixture::offline().await;
+
+    // 附件是**路径**式的（前端选文件只拿得到路径，字节由后端读），
+    // 所以这里得真的有个文件。
+    let path = std::env::temp_dir().join(format!("xremail-test-{}-virus.exe", std::process::id()));
+    std::fs::write(&path, b"MZ fake").expect("写临时文件失败");
+
+    let mut input = draft(&fixture.account_id);
+    input.attachments = vec![xremail_shell_lib::service::compose::DraftAttachment {
+        name: "virus.exe".to_string(),
+        mime: String::new(),
+        size: 0,
+        path: path.to_string_lossy().to_string(),
+    }];
+
+    let result = fixture.service.send(&input, &credential()).await;
+    let _ = std::fs::remove_file(&path);
+
+    let error = result.expect_err("危险扩展名不该发出去");
+    assert!(
+        error.to_string().contains("exe"),
+        "错误里要点名是哪个扩展名，实际是：{error}"
+    );
+}
+
+// ------------------------------------------------------------ 草稿与撤回
+
+#[tokio::test]
+async fn drafts_can_be_listed_and_read_back() {
+    let fixture = Fixture::offline().await;
+
+    let saved = fixture
+        .service
+        .save_draft(&draft(&fixture.account_id))
+        .await
+        .expect("存草稿失败");
+
+    let drafts = fixture
+        .service
+        .list_drafts(&fixture.account_id)
+        .await
+        .expect("列草稿失败");
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0].id, saved.id);
+    assert_eq!(drafts[0].subject, "你好");
+
+    let detail = fixture
+        .service
+        .get_draft(&saved.id)
+        .await
+        .expect("取草稿全文失败");
+    assert_eq!(detail.id, saved.id);
+    assert_eq!(detail.to, vec!["friend@example.com".to_string()]);
+    assert!(
+        detail.body_text.contains("AUTOTEST-BODY-MARKER"),
+        "草稿全文里要有正文，实际是：{:?}",
+        detail.body_text
+    );
+}
+
+#[tokio::test]
+async fn an_uncertain_send_can_be_withdrawn_back_to_a_draft() {
+    // 服务器收完 DATA 不回应答 → 结果未确认。
+    let (fixture, server) = Fixture::with_server(secure_config().dropping_data_response()).await;
+
+    let result = fixture
+        .service
+        .send(&draft(&fixture.account_id), &credential())
+        .await
+        .unwrap();
+    assert_eq!(result.state, SendResultState::Uncertain);
+
+    // 撤回：用户确认「服务器上确实没有」之后，把信改回草稿。
+    assert!(
+        fixture
+            .service
+            .withdraw_draft(&result.entry_id)
+            .await
+            .expect("撤回失败"),
+        "结果未确认的信应当能撤回来"
+    );
+
+    let row = fixture.stored().await;
+    assert_eq!(row.state, SendState::Draft);
+    assert!(
+        row.message_bytes.is_none(),
+        "撤回来之后内容就该能改：冻结的字节必须清掉"
+    );
+
+    // 撤回来之后它出现在草稿列表里。
+    let drafts = fixture
+        .service
+        .list_drafts(&fixture.account_id)
+        .await
+        .unwrap();
+    assert_eq!(drafts.len(), 1);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_sent_message_cannot_be_withdrawn() {
+    let (fixture, server) = Fixture::with_server(secure_config()).await;
+
+    let result = fixture
+        .service
+        .send(&draft(&fixture.account_id), &credential())
+        .await
+        .unwrap();
+    assert_eq!(result.state, SendResultState::Sent);
+
+    assert!(
+        !fixture
+            .service
+            .withdraw_draft(&result.entry_id)
+            .await
+            .expect("撤回判定失败"),
+        "已经发出去的信不能撤回来"
+    );
+
+    server.shutdown().await;
 }

@@ -456,6 +456,57 @@ body {
   background: color-mix(in srgb, currentColor 5%, transparent);
 }
 
+/*
+ * 渲染出来的 HTML 正文（后端已消毒）。
+ *
+ * 不用 `white-space: pre-wrap`：HTML 里的换行是排版用的，
+ * 保留它会把段落拆得稀碎。消毒器已经把它压成了一行一段，
+ * 所以这里交给浏览器的默认排版就行。
+ */
+.message-body-html {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.message-body-html p {
+  margin: 0 0 12px;
+}
+
+.message-body-html p:last-child {
+  margin-bottom: 0;
+}
+
+.message-body-html a {
+  color: var(--accent, currentColor);
+}
+
+.message-body-html table {
+  border-collapse: collapse;
+  max-width: 100%;
+}
+
+.message-body-html td,
+.message-body-html th {
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.message-body-html img {
+  max-width: 100%;
+}
+
+.message-body-html pre,
+.message-body-html code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.92em;
+}
+
+.message-body-html pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
 .account-actions {
   display: flex;
   gap: 8px;
@@ -750,4 +801,83 @@ body {
   border-radius: 0.5rem;
   background: color-mix(in srgb, #dc2626 12%, transparent);
   color: #b91c1c;
+}
+
+/* ---------------------------------------------------------------- 搜索面板 */
+/* 搜的是本地缓存，所以放在账户区下面、和浏览区并列——它跨账户。 */
+.search-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.search-form input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  font: inherit;
+}
+
+.search-form button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  background: #f1f5f9;
+  font: inherit;
+  cursor: pointer;
+}
+
+.search-form button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.search-result-button {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.search-result-button:hover {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.search-result-subject {
+  font-weight: 600;
+}
+
+.search-result-meta {
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.search-result-snippet {
+  font-size: 0.8125rem;
+  color: #475569;
+  overflow-wrap: anywhere;
+}
+
+.search-result-snippet mark {
+  background: #fef08a;
+  color: inherit;
+  padding: 0 0.1em;
 }

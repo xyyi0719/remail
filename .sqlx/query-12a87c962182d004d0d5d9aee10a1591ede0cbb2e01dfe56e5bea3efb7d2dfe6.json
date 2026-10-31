@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT message_id, html_raw\n        FROM message_body\n        WHERE html_raw IS NOT NULL\n          AND (text_plain IS NULL OR TRIM(text_plain) = '')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "message_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message_body",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "html_raw",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message_body",
+            "name": "html_raw"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "12a87c962182d004d0d5d9aee10a1591ede0cbb2e01dfe56e5bea3efb7d2dfe6"
+}

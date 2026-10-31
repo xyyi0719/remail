@@ -4,12 +4,23 @@
 //! （不得出现 `sqlx` / `tokio` / `tauri` / `reqwest` 等引用）。
 //! 其余所有 crate 都依赖它，从而保证依赖方向单一、无环。
 
+pub mod address;
+pub mod attachment;
 pub mod error;
 pub mod event;
+pub mod html;
 pub mod model;
 
+pub use address::{
+    AddressProblem, AddressReason, AddressValidation, NormalizedAddress, validate_addresses,
+    validate_addresses_detailed,
+};
+pub use attachment::{
+    AttachmentInput, AttachmentProblem, check_attachment_limits, check_attachment_limits_all,
+};
 pub use error::{AppError, AppResult};
 pub use event::AppEvent;
+pub use html::{html_to_text, sanitize_html};
 pub use model::{
     Account, Address, Attachment, AuthKind, Folder, Message, MessageBody, MessageFlags,
     ProviderKind, ServerConfig, SmtpAuth, SyncMode, SyncState, TlsMode,

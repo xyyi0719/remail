@@ -23,7 +23,7 @@ pub mod sync;
 pub use account::AccountService;
 pub use compose::{ComposeService, DraftDto, DraftInput, SendResult, SendResultState};
 pub use credential::CredentialService;
-pub use message::{FolderDto, MessageFlag, MessageService};
+pub use message::{FolderDto, MessageFlag, MessageService, SearchHitDto};
 pub use sent_copy::{SentCopyOutcome, SentCopyService};
 pub use sync::SyncService;
 

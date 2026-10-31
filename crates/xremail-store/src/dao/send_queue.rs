@@ -616,6 +616,47 @@ pub async fn retry_uncertain(pool: &SqlitePool, id: &str, now_ms: i64) -> AppRes
     Ok(result.rows_affected() > 0)
 }
 
+/// 用户**显式**把「结果未确认」的信撤回来继续改：`uncertain` → `draft`。
+///
+/// ## 和 [`retry_uncertain`] 的区别
+///
+/// `retry_uncertain` 是「再发一次」（同一份字节，`Message-ID` 不变）；
+/// 这个是「**不发了，我要改内容**」——所以冻结的字节必须**清掉**：
+/// 留着的话，下次发出去的还是旧内容，而用户以为自己改了。
+///
+/// 清掉字节之后，这封信和普通草稿没区别了。
+///
+/// ## 代价
+///
+/// 万一服务器其实已经收下了这封信，用户改完再发就变成两封——
+/// 所以**必须由用户确认**（前端弹二次确认，把这个风险说清楚）。
+pub async fn withdraw_to_draft(pool: &SqlitePool, id: &str, now_ms: i64) -> AppResult<bool> {
+    // 这条用**运行时查询**而不是 `query!` 宏：宏需要一条离线缓存条目，
+    // 而离线缓存是**整仓一起**生成的——开发过程中单独重生成会覆盖别人的。
+    // 这条 SQL 很直白（没有列名映射的风险），运行时校验够用。
+    let result = sqlx::query(
+        r#"
+        UPDATE send_queue
+        SET state = 'draft',
+            message_bytes = NULL,
+            message_id = NULL,
+            attempts = 0,
+            error_kind = NULL,
+            error_message = NULL,
+            updated_at = ?
+        WHERE id = ?
+          AND state = 'uncertain'
+        "#,
+    )
+    .bind(now_ms)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| map_sqlx(e, "withdraw_to_draft"))?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 // ===========================================================================
 // 编解码
 // ===========================================================================

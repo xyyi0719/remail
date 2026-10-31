@@ -10,5 +10,6 @@ pub mod account;
 pub mod folder;
 pub mod message;
 pub mod operation;
+pub mod search;
 pub mod send_queue;
 pub mod sync;

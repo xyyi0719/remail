@@ -136,6 +136,24 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MessageError> {
         }
     }
 
+    // 只有 HTML、没有纯文本时，**从 HTML 派生一份纯文本**。
+    //
+    // 真实邮箱里的邮件大多是 HTML-only（实测 163：纯文本部分为空）。
+    // 不派生的话：
+    // * 搜索索引只吃 `text_plain` → 这类邮件的正文**一个字都搜不到**；
+    // * 阅读界面只能显示 HTML 源码（除非渲染消毒后的 HTML）。
+    //
+    // 派生出来的文本**只作投影**：原始 HTML 仍在 `html_raw` 里，
+    // 渲染时用它（先消毒）。
+    if parsed.text_plain.is_none()
+        && let Some(html) = parsed.html_raw.as_deref()
+    {
+        let derived = xremail_core::html::html_to_text(html);
+        if !derived.is_empty() {
+            parsed.text_plain = Some(derived);
+        }
+    }
+
     Ok(parsed)
 }
 

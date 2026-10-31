@@ -24,6 +24,7 @@ use xremail_core::model::{
 use xremail_store::dao::folder as folder_dao;
 use xremail_store::dao::message as message_dao;
 use xremail_store::dao::operation as operation_dao;
+use xremail_store::dao::search as search_dao;
 use xremail_sync::intent::{FlagIntent, apply_intents};
 
 use super::{current_time_ms, new_operation_id};
@@ -33,6 +34,25 @@ use super::{current_time_ms, new_operation_id};
 /// **不要**直接返回领域模型 [`Folder`]：它的 `remote_name` 是
 /// **线路上的原样**（modified UTF-7，如 `&XfJT0ZAB-`），
 /// 那是发命令时要用的，不是给人看的。
+/// 一条搜索命中（给前端结果列表用）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHitDto {
+    /// 邮件的本地 id。
+    pub message_id: String,
+    pub account_id: String,
+    pub folder_id: String,
+    /// IMAP UID —— 打开邮件时用它（与 `open_message` 的参数一致）。
+    pub uid: i64,
+    pub subject: String,
+    /// 发件人显示串（多个人用「, 」隔开）。
+    pub from: String,
+    /// 发信时间（epoch 毫秒）。
+    pub date_sent: Option<i64>,
+    /// 命中片段（命中词用 `**` 包住）。
+    pub snippet: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderDto {
@@ -124,6 +144,49 @@ impl<'de> Deserialize<'de> for MessageFlag {
 }
 
 /// 邮件服务。
+/// 给渲染层的正文。
+///
+/// **只有消毒过的 HTML**。
+///
+/// 原始 HTML（`html_raw`）留在数据库里，**不出后端**：
+/// 前端拿到的是 `html_safe`——它过了 [`xremail_core::html::sanitize_html`]，
+/// 标签与属性都在白名单里，脚本、事件处理器、远程图片、样式都没了。
+///
+/// ## 为什么不让前端自己消毒
+///
+/// 前端那份消毒（编辑器的 DOM 版）只对**编辑器里的内容**有效；
+/// 渲染邮件正文必须用后端这一份：后端消毒器是手写扫描器，
+/// 不依赖浏览器的解析行为，绕不过去。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageBodyView {
+    /// 邮件 id。
+    pub message_id: String,
+    /// 纯文本正文（HTML-only 的邮件是从 HTML 派生的）。
+    pub text_plain: Option<String>,
+    /// **已消毒**的 HTML。可以安全地交给 `dangerouslySetInnerHTML`。
+    pub html_safe: Option<String>,
+    /// 正文字符集。
+    pub charset: Option<String>,
+}
+
+impl MessageBodyView {
+    /// 从领域对象构造（顺带消毒 HTML）。
+    pub fn from_domain(body: MessageBody) -> Self {
+        let html_safe = body
+            .html_raw
+            .as_deref()
+            .map(xremail_core::html::sanitize_html)
+            .filter(|html| !html.is_empty());
+        MessageBodyView {
+            message_id: body.message_id,
+            text_plain: body.text_plain,
+            html_safe,
+            charset: body.charset,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MessageService {
     pool: SqlitePool,
@@ -175,6 +238,49 @@ impl MessageService {
         Ok(messages)
     }
 
+    /// 搜索本地缓存里的邮件。
+    ///
+    /// 搜索只落在**本地缓存**上（不查服务器）：远端 IMAP 的搜索能力不可靠
+    /// ——163 的 `UID SEARCH` 只认 `ALL`，其它关键字静默失效（已知风险 R23）。
+    /// 代价是搜不到还没同步下来的邮件。
+    pub async fn search(&self, query: &str, limit: usize) -> AppResult<Vec<SearchHitDto>> {
+        let hits = search_dao::search(&self.pool, query, limit).await?;
+
+        let mut results = Vec::with_capacity(hits.len());
+        for hit in hits {
+            // 命中行只带邮件 id；列表要显示主题/发件人/日期，
+            // 所以再取一次消息本身（本地 SQLite，逐条查很便宜）。
+            let Some(message) = message_dao::get_message(&self.pool, &hit.message_id).await? else {
+                // 索引里有、消息表里没有 = 数据不一致（不该发生）。
+                // 跳过而不是报错——一条坏命中不该让整个搜索报错。
+                continue;
+            };
+
+            results.push(SearchHitDto {
+                message_id: message.id.clone(),
+                account_id: message.account_id.clone(),
+                folder_id: message.folder_id.clone(),
+                uid: message.uid,
+                subject: message.subject.clone().unwrap_or_default(),
+                from: message
+                    .from
+                    .iter()
+                    .map(|address| match &address.name {
+                        Some(name) if !name.trim().is_empty() => {
+                            format!("{name} <{}>", address.email)
+                        }
+                        _ => address.email.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                date_sent: message.date_sent,
+                snippet: hit.snippet,
+            });
+        }
+
+        Ok(results)
+    }
+
     /// 读一封邮件的正文（**已缓存**的）。
     ///
     /// 返回 `None` 表示本地还没有正文——需要按需去服务器拉。
@@ -189,6 +295,21 @@ impl MessageService {
             return Ok(None);
         };
         message_dao::get_message_body(&self.pool, &message.id).await
+    }
+
+    /// 读一封邮件的正文，**给渲染层用**（HTML 已消毒）。
+    ///
+    /// 返回 `None` 表示本地还没有正文——需要按需去服务器拉。
+    pub async fn get_body_view(
+        &self,
+        account_id: &str,
+        folder_id: &str,
+        uid: i64,
+    ) -> AppResult<Option<MessageBodyView>> {
+        Ok(self
+            .get_body(account_id, folder_id, uid)
+            .await?
+            .map(MessageBodyView::from_domain))
     }
 
     /// 按远端身份取一封邮件。

@@ -22,6 +22,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+# 选附件用的系统文件对话框。
+# 选的是**路径**，字节由后端自己读——
+# 免得几十 MB 的文件在前端读成字节数组再进 IPC（参数体会被撑爆）。
+tauri-plugin-dialog = "2"
 
 xremail-core = { workspace = true }
 xremail-store = { workspace = true }

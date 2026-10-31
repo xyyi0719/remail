@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE message_body\n            SET text_plain = ?\n            WHERE message_id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4008e70855114a4b85400fc4938eb784fe3fd71df90bf07e2a70fb296be26312"
+}

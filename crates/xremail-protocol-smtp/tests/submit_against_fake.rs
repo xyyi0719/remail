@@ -11,12 +11,14 @@
 //! 4. `RCPT` 被拒 → `Rejected { stage: RcptTo }`，且**没有** `DATA`。
 //! 5. 4xx 可重试、5xx 不可重试、`Uncertain` 不可重试。
 //! 6. `DATA` 之后最终应答丢失 → `Uncertain { stage: Data }`。
-//! 7. `8BITMIME`：服务器支持才带 `BODY=8BITMIME`。
+//! 7. `8BITMIME`：服务器支持才带 `BODY=8BITMIME`；服务器**不支持**而邮件确实是
+//!    8 位 → **报错**（一个字节都不发出去）。
 //! 8. dot-stuffing：正文里以 `.` 开头的行，线上变成 `..`。
 //! 9. 写给服务器的行一律 CRLF。
 //! 10. `SIZE` 限制：服务器声明的上限要**真的**生效。
 //! 11. 无论成功失败都尽量 `QUIT`。
-//! 12. `SMTPUTF8` 本批**不做**（163 不支持）——线上不能出现这个参数。
+//! 12. `SMTPUTF8`：**只有**地址含非 ASCII 且服务器宣告了它才带（能力协商的完整
+//!     用例见 [`capability_negotiation.rs`](capability_negotiation.rs)）。
 
 use std::time::Duration;
 
@@ -352,9 +354,8 @@ async fn eight_bitmime_parameter_is_omitted_when_unsupported() {
         start_server(SmtpServerConfig::new().with_extensions(&["SIZE 52428800", "PIPELINING"]))
             .await;
 
-    let mut request = make_request(USER, &["friend@example.com"], b"Subject: x\r\n\r\nbody\r\n");
-    // 即使调用方说「这封信是 8 位的」，服务器不支持也不能带。
-    request.eight_bit = true;
+    // 这封信是纯 7 位 → 不需要任何 ESMTP 参数。
+    let request = make_request(USER, &["friend@example.com"], b"Subject: x\r\n\r\nbody\r\n");
 
     let outcome = submit_message(
         &config_for(&server),
@@ -378,6 +379,50 @@ async fn eight_bitmime_parameter_is_omitted_when_unsupported() {
         !mail_from.contains("8BITMIME"),
         "服务器不支持 8BITMIME 时不能带这个参数，实际: {mail_from:?}"
     );
+}
+
+#[tokio::test]
+async fn eight_bit_body_is_refused_when_server_does_not_announce_8bitmime() {
+    // 服务器**没有**宣告 `8BITMIME`，而这封信确实是 8 位 →
+    // RFC 6152 §3：客户端不能在没有 8BITMIME 的服务器上发 8 位正文。
+    // 所以必须**报错**，而不是「默默降级成 7 位」——
+    // 默默降级会把已经被编码成 8 位的正文原样发出去（对方按 7 位解，乱码）。
+    let server =
+        start_server(SmtpServerConfig::new().with_extensions(&["SIZE 52428800", "PIPELINING"]))
+            .await;
+
+    let mut request = make_request(USER, &["friend@example.com"], b"Subject: x\r\n\r\nbody\r\n");
+    request.eight_bit = true;
+
+    let result = submit_message(
+        &config_for(&server),
+        &trust(&server),
+        USER,
+        PASSWORD,
+        &request,
+    )
+    .await;
+
+    let mail_from_lines = server.mail_from_lines();
+    let messages = server.messages();
+    server.shutdown().await;
+
+    match result {
+        Err(err) => {
+            assert!(matches!(err, SmtpError::Unsupported(_)), "实际: {err}");
+            assert!(
+                err.to_string().contains("8BITMIME"),
+                "报错要说清楚缺哪个能力，实际: {err}"
+            );
+        }
+        Ok(outcome) => panic!("服务器不支持 8BITMIME 时应当报错，实际: {outcome:?}"),
+    }
+
+    assert!(
+        mail_from_lines.is_empty(),
+        "发不出去就不该发出 MAIL FROM，实际: {mail_from_lines:?}"
+    );
+    assert!(messages.is_empty(), "不该收到任何邮件");
 }
 
 #[tokio::test]
@@ -574,9 +619,8 @@ async fn quit_is_sent_on_success_and_on_rejection() {
 
 #[tokio::test]
 async fn smtputf8_is_not_sent_this_round() {
-    // 163 不支持 `SMTPUTF8`（探测已确认），本批**不做**这条路：
-    // 服务器宣告了 `SMTPUTF8` 也不能贸然用——一旦要用，
-    // 必须先确认服务器支持，否则退化成 RFC 2047 编码。
+    // 服务器宣告了 `SMTPUTF8`，但地址全是 ASCII → 依然**不**带这个参数。
+    // （地址含非 ASCII 时才带，见 `capability_negotiation.rs`。）
     let server = start_server(SmtpServerConfig::new()).await;
 
     let request = make_request(USER, &["friend@example.com"], b"Subject: x\r\n\r\nbody\r\n");
@@ -597,7 +641,7 @@ async fn smtputf8_is_not_sent_this_round() {
     for line in &lines {
         assert!(
             !line.contains("SMTPUTF8"),
-            "本批不支持 SMTPUTF8，不该出现在命令里: {line:?}"
+            "ASCII 地址不该出现 SMTPUTF8 参数: {line:?}"
         );
     }
 }

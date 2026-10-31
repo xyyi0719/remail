@@ -28,21 +28,45 @@
 //! 连接 → `EHLO` → （必要时 `STARTTLS` → 重新 `EHLO`）→ `AUTH`
 //! → `MAIL FROM` → `RCPT TO`（每个信封收件人一条）→ `DATA` → 读最终应答 → `QUIT`。
 //!
-//! ## SMTPUTF8（RFC 6531）：本批**不做**
+//! ## 能力协商：服务器**宣告**了什么才算什么
 //!
-//! 探测显示：**QQ 支持 `SMTPUTF8`，163 不支持**。
+//! `MAIL FROM` 的 ESMTP 参数**只按服务器在 `EHLO` 里宣告的**来带：
 //!
-//! 一旦要用（非 ASCII 的邮箱地址，或者标题里直接放 UTF-8 而不是 RFC 2047 编码），
-//! **必须先确认服务器宣告了 `SMTPUTF8`**——没宣告就发 `SMTPUTF8` 参数，
-//! 服务器会直接拒收整个事务。退路是**退化成 RFC 2047 编码**
-//! （`=?UTF-8?B?...?=` / `=?UTF-8?Q?...?=`），也就是把非 ASCII 标题全部编码掉。
+//! | 信封地址 | 8 位正文 | 服务器宣告 | `MAIL FROM` 参数 |
+//! |---|---|---|---|
+//! | 全 ASCII | 否 | 任意 | 无 |
+//! | 全 ASCII | 是 | `8BITMIME` | `BODY=8BITMIME` |
+//! | 全 ASCII | 是 | **无** `8BITMIME` | **报错**（不发） |
+//! | 有非 ASCII | 任意 | `SMTPUTF8` | `SMTPUTF8`（还要 8 位正文时再加 `BODY=8BITMIME`） |
+//! | 有非 ASCII | 任意 | **无** `SMTPUTF8` | **报错**（不发） |
 //!
-//! 位置已经留好：[`crate::probe::ExtensionSupport::smtputf8`] 就是那个开关，
-//! 但**本模块不会**主动使用它——要开这条路，先把地址与标题的编码策略定下来。
+//! 「报错」= `Err(SmtpError::Unsupported)`，而且**发生在 `MAIL FROM` 之前**——
+//! 一个字节都没发出去。半途失败是最糟的：事务开了头，服务器那边悬着，
+//! 用户既没收到邮件，也没收到一个干净的结果。
+//!
+//! ## RFC 依据
+//!
+//! * **RFC 6152 §3** —— 服务器没宣告 `8BITMIME` 时，客户端「**不得以任何理由**」
+//!   发送含 US-ASCII 范围（hex 00-7F）之外字节的内容。
+//! * **RFC 6531 §3.2 / §3.4** —— 用了 UTF-8 地址就**必须**在 `MAIL FROM` 上带
+//!   `SMTPUTF8` 参数；反过来，服务器没宣告 `SMTPUTF8` 时客户端**不得**发国际化地址。
+//!   RFC 6531 §3.4 还说：信封与正文都**不需要**这个能力时，
+//!   客户端**不应该**（SHOULD NOT）带这个参数——所以 ASCII 邮件不带它。
+//!
+//! ## 实测的各家服务器（2026-10，见 `docs/PROTOCOLS.md`）
+//!
+//! | 服务器 | `8BITMIME` | `SMTPUTF8` | 后果 |
+//! |---|---|---|---|
+//! | `smtp.163.com:465` | ✅ | ❌ | 只能发 ASCII 地址；非 ASCII 地址**直接报错** |
+//! | `smtp.qq.com:465` | ✅ | ✅ | 非 ASCII 地址可以发（自动带 `SMTPUTF8`） |
+//!
+//! 也就是说：非 ASCII 邮箱地址在 163 上**发不出去**，这不是 bug，是服务器没这个能力；
+//! 客户端唯一正确的做法就是**提前说清楚**，而不是发一个必然被拒的事务。
 
 use crate::error::SmtpError;
-use crate::probe::{Extension, auth_mechanisms, extension_support, parse_extensions};
-use crate::session::{AuthMechanism, SmtpSession};
+use crate::session::{
+    AuthMechanism, MailFromParams, SmtpCapabilities, SmtpSession, address_requires_smtputf8,
+};
 use crate::transport::{SmtpConfig, TlsMode, TlsTrust};
 
 /// `EHLO` 用的域名。
@@ -72,7 +96,13 @@ pub struct SubmitRequest {
     pub envelope: Envelope,
     /// 完整邮件字节（由 MIME 构建层产出）。
     pub message: Vec<u8>,
-    /// 服务器支持 `8BITMIME` 时为 true → `MAIL FROM` 带 `BODY=8BITMIME`。
+    /// 正文是否含 8 位内容。
+    ///
+    /// `true` → `MAIL FROM` 带 `BODY=8BITMIME`，但**前提**是服务器宣告了
+    /// `8BITMIME`；服务器没宣告就**直接报错**（RFC 6152 §3：
+    /// 客户端不能在没有 `8BITMIME` 的服务器上发 8 位正文）。
+    ///
+    /// `false` → 这封信是纯 7 位，不需要任何 ESMTP 参数。
     pub eight_bit: bool,
 }
 
@@ -206,6 +236,7 @@ pub async fn submit_message(
         password,
         request,
         config.tls_mode,
+        &config.host,
     )
     .await;
 
@@ -225,6 +256,7 @@ async fn run_submission(
     password: &str,
     request: &SubmitRequest,
     tls_mode: TlsMode,
+    host: &str,
 ) -> Result<SubmitOutcome, SmtpError> {
     // 1) 问候。服务器在问候里就拒收（`554` 之类）——连门都没进。
     let greeting = session.greeting().await?;
@@ -237,28 +269,29 @@ async fn run_submission(
     }
 
     // 2) EHLO（必要时 STARTTLS 后再 EHLO）。
-    let extensions = negotiate(session, trust, tls_mode).await?;
-    let support = extension_support(&extensions);
+    let capabilities = negotiate(session, trust, tls_mode).await?;
 
-    // 3) 认证。
-    if let Some(outcome) = authenticate(session, &extensions, user, password).await? {
+    // 3) **能力检查**：在发出任何投递命令之前就把「发不了」说清楚。
+    //
+    // 顺序很要紧——这一步在 `AUTH` **之前**：
+    // 已经知道这封信发不出去，就没必要把口令送出去。
+    let mail_from_params = match decide_mail_from_params(request, &capabilities, host) {
+        Ok(params) => params,
+        Err(err) => return Err(err),
+    };
+
+    // 4) 认证。
+    if let Some(outcome) = authenticate(session, &capabilities, user, password).await? {
         return Ok(outcome);
     }
 
-    // 4) `MAIL FROM`。
+    // 5) `MAIL FROM`。
     //
-    // `BODY=8BITMIME` 只在**服务器宣告了 `8BITMIME`**时才带：
-    // 服务器没宣告还带这个参数，它会拒收整个事务。
-    // 至于「这封信本身是不是 8 位内容」，由调用方通过 `SubmitRequest::eight_bit` 决定。
-    //
-    // ## SMTPUTF8 的位置（RFC 6531）
-    //
-    // 这里**没有** `SMTPUTF8` 参数，这是有意的：
-    // 探测显示 QQ 支持、163 不支持，而服务器不支持时带上它会被拒收。
-    // 真要用，必须先确认 `support.smtputf8`，否则退化成 RFC 2047 编码。
-    let body_8bitmime = request.eight_bit && support.eight_bit_mime;
+    // 参数是**算出来的**，不是猜的：`mail_from_params` 已经按服务器宣告的
+    // 能力把该带的参数带齐、把不该带的排除了；
+    // 服务器缺能力时它已经报错了（一个字节都没发出去）。
     let mail_from = match session
-        .mail_from(&request.envelope.sender, body_8bitmime)
+        .mail_from_with_params(&request.envelope.sender, mail_from_params)
         .await
     {
         Ok(response) => response,
@@ -279,7 +312,7 @@ async fn run_submission(
         });
     }
 
-    // 5) `RCPT TO`：每个信封收件人一条。
+    // 6) `RCPT TO`：每个信封收件人一条。
     //
     // **任何一个被拒就停在这里**：不再往下走，更不发 `DATA`。
     // 发了 `DATA` 就等于「这封信要投出去了」——明知道有收件人被拒还发，
@@ -303,7 +336,7 @@ async fn run_submission(
         }
     }
 
-    // 6) `DATA`：写正文，读最终应答。
+    // 7) `DATA`：写正文，读最终应答。
     let data = match session.data(&request.message).await {
         Ok(response) => response,
         // 正文已经写出去了，却没拿到最终应答 → **不确定**。
@@ -333,21 +366,22 @@ async fn run_submission(
 
 /// `EHLO` + （必要时）`STARTTLS` + 再 `EHLO`。
 ///
-/// 返回 **TLS 阶段**的扩展清单（权威版本）：
+/// 返回 **TLS 阶段**的能力集（权威版本）：
 /// RFC 3207 §4.2 要求握手之后**重新** `EHLO`——
-/// 很多服务器只在 TLS 之后才宣告 `AUTH`。
+/// 很多服务器只在 TLS 之后才宣告 `AUTH`，
+/// 也可能在 TLS 之后才（或不再）宣告 `8BITMIME` / `SMTPUTF8`。
 async fn negotiate(
     session: &mut SmtpSession,
     trust: &TlsTrust,
     tls_mode: TlsMode,
-) -> Result<Vec<Extension>, SmtpError> {
+) -> Result<SmtpCapabilities, SmtpError> {
     match tls_mode {
         TlsMode::Direct => {
             let response = session.ehlo(EHLO_DOMAIN).await?;
             if !response.is_success() {
                 return Err(SmtpError::Smtp(format!("EHLO 被拒绝: {}", response.text)));
             }
-            Ok(parse_extensions(&response))
+            Ok(session.capabilities().clone())
         }
         TlsMode::Starttls => {
             // 明文阶段先 `EHLO`：服务器告不宣告 `STARTTLS`。
@@ -355,8 +389,7 @@ async fn negotiate(
             if !first.is_success() {
                 return Err(SmtpError::Smtp(format!("EHLO 被拒绝: {}", first.text)));
             }
-            let before = parse_extensions(&first);
-            if !before.iter().any(|ext| ext.keyword == "STARTTLS") {
+            if !session.capabilities().has_keyword("STARTTLS") {
                 // **不降级**：没有 TLS 就不提交（更不认证）。
                 // 宁可报错，也不能在明文上把口令送出去。
                 return Err(SmtpError::Unsupported(
@@ -374,9 +407,66 @@ async fn negotiate(
                     second.text
                 )));
             }
-            Ok(parse_extensions(&second))
+            Ok(session.capabilities().clone())
         }
     }
+}
+
+/// 按服务器宣告的能力，决定 `MAIL FROM` 该带哪些参数。
+///
+/// 服务器缺能力时**在这里就报错**——在发 `MAIL FROM` 之前。
+///
+/// ## 为什么必须在发命令之前报错
+///
+/// 服务器拒绝一个不合规矩的 `MAIL FROM`，拒的是**整个事务**：
+/// 已经开的事务作废、已经发的命令白费，用户还得重新来一遍。
+/// 与其发出去碰壁，不如一开始就讲清楚「这台服务器发不了这封信」。
+///
+/// ## 为什么地址与正文分开判
+///
+/// 两个扩展管的是两件事，缺哪个就报哪个：
+///
+/// * `SMTPUTF8`（RFC 6531 §3.2 / §3.4）管**信封地址**里的非 ASCII；
+/// * `8BITMIME`（RFC 6152 §3）管**正文**里的 8 位内容。
+///
+/// 报错要说清楚是**哪个地址**、缺**哪个能力**——用户能照着改。
+fn decide_mail_from_params(
+    request: &SubmitRequest,
+    capabilities: &SmtpCapabilities,
+    host: &str,
+) -> Result<MailFromParams, SmtpError> {
+    // 1) 非 ASCII 地址 → 需要 `SMTPUTF8`。
+    let utf8_addresses: Vec<&str> = std::iter::once(request.envelope.sender.as_str())
+        .chain(request.envelope.recipients.iter().map(String::as_str))
+        .filter(|address| address_requires_smtputf8(address))
+        .collect();
+
+    if !utf8_addresses.is_empty() && !capabilities.supports_smtputf8() {
+        // 把**所有**出问题的地址都列出来：用户可能一次改掉，
+        // 只报第一个会让人来回试。
+        let listed = utf8_addresses.join("」「");
+        return Err(SmtpError::Unsupported(format!(
+            "地址「{listed}」含非 ASCII 字符，需要 SMTPUTF8 扩展（RFC 6531），但服务器 {host} 没有宣告 SMTPUTF8：这封信发不出去，尚未发出任何投递命令；请改用纯 ASCII 地址，或换一个宣告了 SMTPUTF8 的服务器"
+        )));
+    }
+
+    // 2) 8 位正文 → 需要 `8BITMIME`。
+    //
+    // RFC 6152 §3 给了客户端两条路：把正文**转成 7 位**（网关转换），
+    // 或者把 8 位当成**永久性失败**（按投递失败处理）。
+    // 这里选后者：正文用什么编码（quoted-printable / base64）是**MIME 构建层**的
+    // 决定；在这一层偷偷重编码，会让线上的字节和正文里声明的 `Content-Transfer-Encoding`
+    // 对不上——收件人看到的是坏信，而不是一句清楚的错误。
+    if request.eight_bit && !capabilities.supports_8bitmime() {
+        return Err(SmtpError::Unsupported(format!(
+            "这封信的正文含 8 位内容，需要 8BITMIME 扩展（RFC 6152），但服务器 {host} 没有宣告 8BITMIME：这封信发不出去，尚未发出任何投递命令；请把正文转成 7 位（quoted-printable / base64），或换一个宣告了 8BITMIME 的服务器"
+        )));
+    }
+
+    Ok(MailFromParams {
+        body_8bitmime: request.eight_bit && capabilities.supports_8bitmime(),
+        smtputf8: !utf8_addresses.is_empty() && capabilities.supports_smtputf8(),
+    })
 }
 
 /// 认证。
@@ -385,11 +475,11 @@ async fn negotiate(
 /// `None` = 认证通过（或服务器压根不要求认证），可以继续往下走。
 async fn authenticate(
     session: &mut SmtpSession,
-    extensions: &[Extension],
+    capabilities: &SmtpCapabilities,
     user: &str,
     password: &str,
 ) -> Result<Option<SubmitOutcome>, SmtpError> {
-    let mechanisms = auth_mechanisms(extensions);
+    let mechanisms = &capabilities.auth_mechanisms;
     if mechanisms.is_empty() {
         // 服务器没宣告 `AUTH`：没有认证机制可用。
         // 有些服务器（比如本地中继）确实不要认证——那就直接发。
@@ -397,7 +487,7 @@ async fn authenticate(
         return Ok(None);
     }
 
-    let Some(mechanism) = select_mechanism(&mechanisms) else {
+    let Some(mechanism) = select_mechanism(mechanisms) else {
         return Ok(Some(SubmitOutcome::Rejected {
             code: 504,
             message: format!("服务器宣告的认证机制本客户端都不支持: {mechanisms:?}"),

@@ -11,15 +11,14 @@ use xremail_api::NewAccountRequest;
 use xremail_api::SecretValue;
 use xremail_core::AppError;
 use xremail_core::AppEvent;
-use xremail_core::model::{
-    Account, MailOperation, Message, MessageBody, OperationState, SyncState,
-};
+use xremail_core::model::{Account, MailOperation, Message, OperationState, SyncState};
 use xremail_store::dao::operation as operation_dao;
 
-use crate::service::compose::{DraftDto, DraftInput, SendResult};
+use crate::service::compose::{DraftDetail, DraftDto, DraftInput, SendResult};
 use crate::service::credential::CredentialService;
 use crate::service::current_time_ms;
-use crate::service::message::{FolderDto, MessageFlag};
+use crate::service::message::SearchHitDto;
+use crate::service::message::{FolderDto, MessageBodyView, MessageFlag};
 use crate::state::AppState;
 
 /// 应用基本信息，供前端做环境探测与"关于"页。
@@ -222,7 +221,7 @@ pub async fn open_message(
     account_id: String,
     folder_id: String,
     uid: i64,
-) -> Result<Option<MessageBody>, String> {
+) -> Result<Option<MessageBodyView>, String> {
     // 先在本地找这封邮件。
     //
     // 本地**根本没有**它 → 返回 None（「没这封邮件」与「拉失败」是两回事）。
@@ -235,14 +234,14 @@ pub async fn open_message(
         return Ok(None);
     };
 
-    // 本地有正文 → 直接返回。
+    // 本地有正文 → 直接返回（**HTML 已消毒**）。
     if let Some(body) = state
         .messages
         .get_body(&account_id, &folder_id, uid)
         .await
         .map_err(|e| user_error(&e))?
     {
-        return Ok(Some(body));
+        return Ok(Some(MessageBodyView::from_domain(body)));
     }
 
     // 有邮件但没正文 → **按需**去服务器拉。需要凭据与连接。
@@ -302,7 +301,7 @@ pub async fn open_message(
 
     state
         .messages
-        .get_body(&account_id, &folder_id, uid)
+        .get_body_view(&account_id, &folder_id, uid)
         .await
         .map_err(|e| user_error(&e))
 }
@@ -545,6 +544,65 @@ pub async fn save_draft(state: State<'_, AppState>, draft: DraftInput) -> Result
     state
         .compose
         .save_draft(&draft)
+        .await
+        .map_err(|e| user_error(&e))
+}
+
+/// 搜索本地缓存里的邮件。
+///
+/// 搜索只落在**本地缓存**上（不查服务器）：163 的 `UID SEARCH` 只认 `ALL`，
+/// 其它关键字静默失效（已知风险 R23）。
+///
+/// `limit` 有上限（默认 50，最多 200）——避免一个宽泛的查询把整库拖出来。
+#[tauri::command]
+pub async fn search_messages(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<SearchHitDto>, String> {
+    let limit = limit.unwrap_or(50).clamp(1, 200);
+    state
+        .messages
+        .search(&query, limit)
+        .await
+        .map_err(|e| user_error(&e))
+}
+
+/// 列出某账户的草稿（给「接着上次那封改」用）。
+///
+/// 只列 `draft` 状态的——排队中 / 结果未确认的信内容已冻结，
+/// 不能当草稿改。
+#[tauri::command]
+pub async fn list_drafts(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<DraftDto>, String> {
+    state
+        .compose
+        .list_drafts(&account_id)
+        .await
+        .map_err(|e| user_error(&e))
+}
+
+/// 取一份草稿的全文（正文与附件）。
+#[tauri::command]
+pub async fn get_draft(state: State<'_, AppState>, id: String) -> Result<DraftDetail, String> {
+    state
+        .compose
+        .get_draft(&id)
+        .await
+        .map_err(|e| user_error(&e))
+}
+
+/// 把「结果未确认」的信撤回来继续改。
+///
+/// **必须由用户确认**（前端弹二次确认）：
+/// 万一服务器其实已经收下了这封信，改完再发就变成两封。
+#[tauri::command]
+pub async fn withdraw_draft(state: State<'_, AppState>, entry_id: String) -> Result<bool, String> {
+    state
+        .compose
+        .withdraw_draft(&entry_id)
         .await
         .map_err(|e| user_error(&e))
 }

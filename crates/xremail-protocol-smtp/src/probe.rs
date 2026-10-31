@@ -21,8 +21,15 @@
 //! 报告里**不出现**口令。用户名由调用方自己脱敏（见 `mask_user`）。
 
 use crate::error::SmtpError;
-use crate::session::{AuthMechanism, SmtpResponse, SmtpSession};
+use crate::session::{AuthMechanism, SmtpSession};
 use crate::transport::{SmtpConfig, TlsInfo, TlsMode, TlsTrust};
+
+// EHLO 扩展模型住在 `session`（能力是会话的属性，探测只是它的一个只读用途）。
+// 这里**重导出**是为了让原有的 `probe::parse_extensions` / `probe::Extension`
+// 这些路径继续可用——公开 API 的形状不变。
+pub use crate::session::{
+    Extension, ExtensionSupport, auth_mechanisms, extension_support, parse_extensions,
+};
 
 /// 探测配置。
 #[derive(Debug, Clone)]
@@ -64,47 +71,6 @@ impl ProbeConfig {
         self.strict_tls = true;
         self
     }
-}
-
-/// 一条 EHLO 扩展。
-#[derive(Debug, Clone)]
-pub struct Extension {
-    /// 关键字（大写），如 `8BITMIME`。
-    pub keyword: String,
-    /// 参数（如 `SIZE` 的 `52428800`、`AUTH` 的 `LOGIN PLAIN`）。
-    pub params: Vec<String>,
-    /// 服务器返回的原文（不含 `250-` 前缀）。
-    pub raw: String,
-}
-
-/// 扩展支持度。
-///
-/// 每一项都对应发送链路里的一个具体决策：能不能发 8 位正文、
-/// 能不能用 UTF-8 标题、能不能一次发很大的附件。
-#[derive(Debug, Clone, Default)]
-pub struct ExtensionSupport {
-    /// `8BITMIME` —— 允许 `BODY=8BITMIME`。
-    pub eight_bit_mime: bool,
-    /// `SMTPUTF8` —— 允许 UTF-8 邮箱地址与非 ASCII 标题。
-    pub smtputf8: bool,
-    /// `SIZE` —— 单封邮件大小上限（字节）。
-    pub size: Option<u64>,
-    /// `STARTTLS` —— 支持明文连接后升级到 TLS。
-    pub starttls: bool,
-    /// `PIPELINING` —— 支持命令流水线。
-    pub pipelining: bool,
-    /// `DSN` —— 支持投递状态通知。
-    pub dsn: bool,
-    /// `CHUNKING` —— 支持 `BDAT` 分块传输。
-    pub chunking: bool,
-    /// `BINARYMIME` —— 支持二进制 MIME 传输。
-    pub binary_mime: bool,
-    /// `ENHANCEDSTATUSCODES` —— 增强状态码。
-    pub enhanced_status_codes: bool,
-    /// `REQUIRETLS` —— 服务器**要求**必须走 TLS。
-    pub requiretls: bool,
-    /// `AUTH` —— 宣告了认证机制。
-    pub auth: bool,
 }
 
 /// 认证结果。
@@ -393,77 +359,4 @@ fn select_mechanism(
     [AuthMechanism::Login, AuthMechanism::Plain]
         .into_iter()
         .find(|candidate| available.contains(candidate))
-}
-/// 把 EHLO 响应解析成扩展清单。
-///
-/// 响应第一行是服务器问候（`250-smtp.163.com Hello`），
-/// 后面每行一条扩展（RFC 5321 §4.1.4）。
-pub fn parse_extensions(response: &SmtpResponse) -> Vec<Extension> {
-    response
-        .texts()
-        .into_iter()
-        // 跳过第一行（问候）。
-        .skip(1)
-        .map(|raw| {
-            let mut parts = raw.split_whitespace();
-            let mut keyword = parts.next().unwrap_or_default().to_ascii_uppercase();
-            let mut params: Vec<String> = Vec::new();
-
-            // 老式写法 `AUTH=LOGIN PLAIN`：等号后面是参数。
-            if let Some(idx) = keyword.find('=') {
-                let rest = keyword[idx + 1..].to_string();
-                keyword = keyword[..idx].to_string();
-                if !rest.is_empty() {
-                    params.push(rest);
-                }
-            }
-            params.extend(parts.map(|s| s.to_string()));
-
-            Extension {
-                keyword,
-                params,
-                raw,
-            }
-        })
-        .collect()
-}
-
-/// 从扩展清单里解析 AUTH 机制。
-pub fn auth_mechanisms(extensions: &[Extension]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-
-    for ext in extensions {
-        if ext.keyword != "AUTH" {
-            continue;
-        }
-        out.extend(ext.params.iter().filter(|p| !p.is_empty()).cloned());
-    }
-
-    out.sort();
-    out.dedup();
-    out
-}
-
-/// 从扩展清单里提取支持度。
-pub fn extension_support(extensions: &[Extension]) -> ExtensionSupport {
-    let mut support = ExtensionSupport::default();
-
-    for ext in extensions {
-        match ext.keyword.as_str() {
-            "8BITMIME" => support.eight_bit_mime = true,
-            "SMTPUTF8" => support.smtputf8 = true,
-            "STARTTLS" => support.starttls = true,
-            "PIPELINING" => support.pipelining = true,
-            "DSN" => support.dsn = true,
-            "CHUNKING" => support.chunking = true,
-            "BINARYMIME" => support.binary_mime = true,
-            "ENHANCEDSTATUSCODES" => support.enhanced_status_codes = true,
-            "REQUIRETLS" => support.requiretls = true,
-            "AUTH" => support.auth = true,
-            "SIZE" => support.size = ext.params.first().and_then(|p| p.parse().ok()),
-            _ => {}
-        }
-    }
-
-    support
 }

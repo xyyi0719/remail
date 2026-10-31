@@ -125,6 +125,43 @@ impl SmtpServerConfig {
         self
     }
 
+    /// 宣告 `8BITMIME`（RFC 6152）：客户端可以带 `BODY=8BITMIME`。
+    pub fn with_8bitmime(mut self) -> Self {
+        push_extension_once(&mut self.ehlo_extensions, "8BITMIME");
+        self
+    }
+
+    /// **不**宣告 `8BITMIME`。
+    ///
+    /// 用来验证「服务器没这个能力时，客户端要么不带参数，要么直接报错」。
+    pub fn without_8bitmime(mut self) -> Self {
+        self.ehlo_extensions
+            .retain(|ext| !extension_keyword(ext).eq_ignore_ascii_case("8BITMIME"));
+        self
+    }
+
+    /// 宣告 `SMTPUTF8`（RFC 6531）：可以用 UTF-8 地址。
+    pub fn with_smtputf8(mut self) -> Self {
+        push_extension_once(&mut self.ehlo_extensions, "SMTPUTF8");
+        self
+    }
+
+    /// **不**宣告 `SMTPUTF8`。
+    ///
+    /// 163 就是这样（实测：163 宣告 `8BITMIME`、不宣告 `SMTPUTF8`）。
+    pub fn without_smtputf8(mut self) -> Self {
+        self.ehlo_extensions
+            .retain(|ext| !extension_keyword(ext).eq_ignore_ascii_case("SMTPUTF8"));
+        self
+    }
+
+    /// 宣告了某个扩展关键字吗（不区分大小写）。
+    pub fn announces(&self, keyword: &str) -> bool {
+        self.ehlo_extensions
+            .iter()
+            .any(|ext| extension_keyword(ext).eq_ignore_ascii_case(keyword))
+    }
+
     /// 指定问候语。
     pub fn with_greeting(mut self, greeting: &str) -> Self {
         self.greeting = greeting.to_string();
@@ -219,6 +256,12 @@ struct ServerState {
     commands: Arc<Mutex<Vec<String>>>,
     /// 收到的命令行**原文**（含行终止符）。
     command_lines: Arc<Mutex<Vec<String>>>,
+    /// 收到的 `MAIL FROM` **原始行**（含行终止符）。
+    ///
+    /// 单独存一份：能力协商的用例要断言「`MAIL FROM` 带没带
+    /// `BODY=8BITMIME` / `SMTPUTF8`」，以及
+    /// 「一个字节都没发出去时这里**是空的**」。
+    mail_from_lines: Arc<Mutex<Vec<String>>>,
     /// 收到的邮件（已去掉 dot-stuffing，即「邮件本来的样子」）。
     messages: Arc<Mutex<Vec<Vec<u8>>>>,
     /// 邮件的**线上原始字节**（仍带 dot-stuffing）。
@@ -356,6 +399,29 @@ impl FakeSmtpServer {
             .lock()
             .map(|c| c.clone())
             .unwrap_or_default()
+    }
+
+    /// 收到的 `MAIL FROM` 原始行（按收到的顺序，含行终止符）。
+    ///
+    /// **空** = 客户端一个 `MAIL FROM` 都没发过。
+    ///
+    /// 这是能力协商用例的正向证据：「服务器不支持 SMTPUTF8 时，
+    /// 客户端**一个字都没发出去**」——不是「发了但被拒」。
+    pub fn mail_from_lines(&self) -> Vec<String> {
+        self.state
+            .mail_from_lines
+            .lock()
+            .map(|lines| lines.clone())
+            .unwrap_or_default()
+    }
+
+    /// 最近一条 `MAIL FROM` 原始行。
+    pub fn mail_from(&self) -> Option<String> {
+        self.state
+            .mail_from_lines
+            .lock()
+            .ok()
+            .and_then(|lines| lines.last().cloned())
     }
 
     /// 收到的邮件（按收到的顺序）。
@@ -510,16 +576,21 @@ async fn serve(
             // 投递类命令：之前只回一句「250 OK」，那是为了证明
             // 「客户端一次都没发过」。现在要真正实现它们——
             // 提交链路的测试需要服务器**真的**收信、**真的**能拒收。
-            "MAIL" => match handle_mail(&config, &tx, &rest, max_size) {
-                Ok(()) => {
-                    tx.mail_from_seen = true;
-                    tx.rcpt_count = 0;
-                    let _ = conn.write_line("250 2.1.0 Ok").await;
+            "MAIL" => {
+                // `MAIL FROM` 的原始行单独留一份：
+                // 能力协商的用例要断言它带没带 `BODY=8BITMIME` / `SMTPUTF8`。
+                record_line(&state.mail_from_lines, &String::from_utf8_lossy(&raw_line));
+                match handle_mail(&config, &mut tx, &rest, max_size) {
+                    Ok(()) => {
+                        tx.mail_from_seen = true;
+                        tx.rcpt_count = 0;
+                        let _ = conn.write_line("250 2.1.0 Ok").await;
+                    }
+                    Err(reply) => {
+                        let _ = conn.write_line(&reply).await;
+                    }
                 }
-                Err(reply) => {
-                    let _ = conn.write_line(&reply).await;
-                }
-            },
+            }
             "RCPT" => match handle_rcpt(&config, &tx, &rest) {
                 Ok(()) => {
                     tx.rcpt_count += 1;
@@ -595,6 +666,12 @@ struct TransactionState {
     mail_from_seen: bool,
     /// 收到过几个 `RCPT TO`。
     rcpt_count: usize,
+    /// 这个事务的 `MAIL FROM` 带过 `SMTPUTF8` 参数。
+    ///
+    /// RFC 6531 §3.4：`SMTPUTF8` 是**事务级**的参数——它跟着
+    /// `MAIL FROM` 走，所以后续的 `RCPT TO` 能不能带非 ASCII 地址，
+    /// 看的是这个标志，不是每个 `RCPT TO` 自己。
+    smtputf8: bool,
 }
 
 /// `AUTH` 的处理结果。
@@ -613,7 +690,7 @@ enum AuthResult {
 /// 服务器要拒收时，得给一个像样的理由（真实服务器会给增强状态码）。
 fn handle_mail(
     config: &SmtpServerConfig,
-    tx: &TransactionState,
+    tx: &mut TransactionState,
     rest: &str,
     max_size: Option<u64>,
 ) -> Result<(), String> {
@@ -635,6 +712,30 @@ fn handle_mail(
     {
         return Err("552 5.3.4 Message size exceeds fixed limit".to_string());
     }
+
+    // RFC 6531 §3.2：服务器**没**宣告 `SMTPUTF8` 时，带这个参数的
+    // `MAIL FROM` 必须被拒（555）——它压根不认识这个参数。
+    let has_smtputf8 = has_esmtp_param(rest, "SMTPUTF8");
+    if has_smtputf8 && !config.announces("SMTPUTF8") {
+        return Err("555 5.5.4 Error: SMTPUTF8 not supported".to_string());
+    }
+
+    // RFC 6531 §3.4：地址含非 ASCII 时，必须配 `SMTPUTF8` 参数，
+    // 而且服务器得宣告过这个扩展——否则它没法处理这个地址（553）。
+    if !address.is_ascii() && !(has_smtputf8 && config.announces("SMTPUTF8")) {
+        return Err(format!(
+            "553 5.1.7 Error: address {address} requires the SMTPUTF8 extension"
+        ));
+    }
+
+    // RFC 6152 §3：服务器**没**宣告 `8BITMIME` 时，不接受
+    // `BODY=8BITMIME` 参数（555）。
+    if has_esmtp_param(rest, "BODY=8BITMIME") && !config.announces("8BITMIME") {
+        return Err("555 5.5.4 Error: BODY=8BITMIME not supported".to_string());
+    }
+
+    // 这个事务是 UTF-8 的：后续的 `RCPT TO` 才允许非 ASCII 地址。
+    tx.smtputf8 = has_smtputf8;
 
     Ok(())
 }
@@ -658,6 +759,14 @@ fn handle_rcpt(config: &SmtpServerConfig, tx: &TransactionState, rest: &str) -> 
         }
     }
 
+    // RFC 6531 §3.4：`SMTPUTF8` 参数跟着 `MAIL FROM` 走；
+    // 没有它的事务里出现非 ASCII 地址，服务器拒（553）。
+    if !address.is_ascii() && !tx.smtputf8 {
+        return Err(format!(
+            "553 5.1.7 Error: address {address} requires the SMTPUTF8 extension"
+        ));
+    }
+
     Ok(())
 }
 
@@ -674,6 +783,39 @@ fn declared_size(rest: &str) -> Option<u64> {
         .filter_map(|token| token.split_once('='))
         .find(|(key, _)| key.eq_ignore_ascii_case("SIZE"))
         .and_then(|(_, value)| value.parse().ok())
+}
+
+/// `MAIL FROM` 的 ESMTP 参数里有没有某个参数。
+///
+/// `rest` 的第一段是 `FROM:<addr>`，要从它**后面**找——
+/// 否则地址里碰巧含有 `SMTPUTF8` 之类字样就会误判。
+fn has_esmtp_param(rest: &str, param: &str) -> bool {
+    rest.split_whitespace()
+        .skip(1)
+        .any(|token| token.eq_ignore_ascii_case(param))
+}
+
+/// 取一条 EHLO 扩展的关键字（不含参数）。
+///
+/// 兼容老式写法 `AUTH=LOGIN PLAIN`：等号后面是参数。
+fn extension_keyword(extension: &str) -> &str {
+    let keyword = extension.split_whitespace().next().unwrap_or_default();
+    keyword.split('=').next().unwrap_or(keyword)
+}
+
+/// 追加一条扩展，但**不重复**。
+///
+/// 默认配置里已经带了 `8BITMIME` / `SMTPUTF8`；
+/// 再 `with_8bitmime()` 一次就重复宣告了——`EHLO` 里出现两行一样的关键字，
+/// 用例看着会很怪。
+fn push_extension_once(extensions: &mut Vec<String>, extension: &str) {
+    if extensions
+        .iter()
+        .any(|ext| extension_keyword(ext).eq_ignore_ascii_case(extension))
+    {
+        return;
+    }
+    extensions.push(extension.to_string());
 }
 
 /// 从 EHLO 扩展清单里读出 `SIZE <n>`（当作服务器的单封邮件上限）。

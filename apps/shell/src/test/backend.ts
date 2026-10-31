@@ -1,5 +1,17 @@
+import { open } from "@tauri-apps/plugin-dialog";
+import { vi } from "vitest";
 import { FLAG_FLAGGED, FLAG_SEEN } from "../types";
-import type { Account, DraftDto, DraftInput, Folder, Message, SendResult } from "../types";
+import type {
+  Account,
+  DraftDetail,
+  DraftDto,
+  DraftInput,
+  Folder,
+  Message,
+  MessageBody,
+  SendResult,
+} from "../types";
+import type { SearchHit } from "../components/SearchPanel";
 import type { InvokeArgs, InvokeImpl } from "./tauriState";
 
 /**
@@ -35,6 +47,27 @@ export interface BackendOptions {
   sendError?: Error | null;
   /** `save_draft` 抛这个错。 */
   saveDraftError?: Error | null;
+  /**
+   * 假后端「读文件」得到的文件大小（按绝对路径查）。
+   *
+   * 前端选文件时只拿得到路径，所以 `size` 传 0；真实大小由后端读文件后回填。
+   * 没登记的路径用 `DEFAULT_STUB_ATTACHMENT_SIZE` 顶替。
+   */
+  fileSizes?: Record<string, number>;
+  /**
+   * `search_messages` 返回的命中。
+   *
+   * 不做真的全文检索（那是后端 FTS5 的事），
+   * 这里只按 query 做子串过滤，够前端测试用。
+   */
+  searchHits?: SearchHit[];
+  /**
+   * `open_message` 返回的正文。
+   *
+   * 默认是「纯文本正文、没有 HTML」；
+   * 测 HTML 渲染路径时传一个带 `htmlSafe` 的。
+   */
+  messageBody?: MessageBody;
 }
 
 export interface Backend {
@@ -55,8 +88,18 @@ export interface Backend {
   saveDraftError: Error | null;
   /** 已经存过的草稿（按 `list_drafts` 的口径存着）。 */
   drafts: DraftDto[];
+  /** 草稿全文（`get_draft` 的返回），按 id 存。 */
+  draftDetails: Map<string, DraftDetail>;
   /** 每次 `send_message` 收到的草稿。 */
   sentDrafts: DraftInput[];
+  /** 发出去的条目（`withdraw_draft` 按 entryId 找它们）。 */
+  sentEntries: SentEntry[];
+  /** 假后端「读文件」得到的文件大小。 */
+  fileSizes: Record<string, number>;
+  /** `search_messages` 备好的命中。 */
+  searchHits: SearchHit[];
+  /** `open_message` 返回的正文。 */
+  messageBody: MessageBody;
   /** 所有 invoke 调用（含参数），按顺序。 */
   calls: InvokeCall[];
   /** 装给 `invoke` 的实现。 */
@@ -65,6 +108,53 @@ export interface Backend {
   callsTo(cmd: string): InvokeCall[];
   /** 某个命令的最后一次调用。 */
   lastCallTo(cmd: string): InvokeCall | undefined;
+}
+
+/** 一条发出去的信（`withdraw_draft` 能把它撤回来）。 */
+export interface SentEntry {
+  entryId: string;
+  draft: DraftInput;
+  state: SendResult["state"];
+}
+
+/** 单个附件上限（10 MiB）。 */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** 一封信的附件个数上限。 */
+const MAX_ATTACHMENTS = 5;
+/** 一封信的附件总大小上限（20 MiB）。 */
+const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+/** 没登记大小的附件，假后端统一报这个大小。 */
+const DEFAULT_STUB_ATTACHMENT_SIZE = 2048;
+
+/** 扩展名 → MIME（只覆盖常见几种，够测试用）。 */
+const MIME_BY_EXTENSION: Record<string, string> = {
+  txt: "text/plain",
+  md: "text/markdown",
+  html: "text/html",
+  json: "application/json",
+  png: "image/png",
+  jpg: "image/jpeg",
+  pdf: "application/pdf",
+};
+
+/** 按扩展名猜 MIME（真实后端也会这么兜底）。 */
+function guessMime(path: string): string {
+  const base = path.split(/[\\/]/).pop() ?? path;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0 || dot === base.length - 1) {
+    return "";
+  }
+  return MIME_BY_EXTENSION[base.slice(dot + 1).toLowerCase()] ?? "";
+}
+
+/**
+ * 让「选择附件」的文件选择框返回这些路径。
+ *
+ * Tauri 的文件选择框是原生插件，单元测试里拉不起来——
+ * 所以在 `test/setup.ts` 里把它 mock 掉了，这里只是往里塞返回值。
+ */
+export function fakeFilePicker(paths: string[]): void {
+  vi.mocked(open).mockImplementation((async () => paths) as never);
 }
 
 /** `send_message` 各状态对应的默认说明。 */
@@ -88,7 +178,17 @@ export function createBackend(options: BackendOptions = {}): Backend {
     sendError: options.sendError ?? null,
     saveDraftError: options.saveDraftError ?? null,
     drafts: [],
+    draftDetails: new Map<string, DraftDetail>(),
     sentDrafts: [],
+    sentEntries: [],
+    fileSizes: { ...(options.fileSizes ?? {}) },
+    searchHits: options.searchHits ?? [],
+    messageBody: options.messageBody ?? {
+      messageId: "<m1@example.com>",
+      textPlain: "正文内容",
+      htmlSafe: null,
+      charset: null,
+    },
     calls: [],
     impl: async () => undefined,
     callsTo(cmd: string): InvokeCall[] {
@@ -114,6 +214,22 @@ export function createBackend(options: BackendOptions = {}): Backend {
     list_folders: () => backend.folders.map((folder) => ({ ...folder })),
     // 每次都返回**新的对象**：后端返回新快照，前端才真的会重渲染。
     list_messages: () => backend.messages.map((message) => ({ ...message })),
+    search_messages: (args) => {
+      const query = String(args.query ?? "").trim().toLowerCase();
+      if (query === "") {
+        return [];
+      }
+      const limit = Number(args.limit ?? 50) || 50;
+      return backend.searchHits
+        .filter((hit) =>
+          [hit.subject, hit.from, hit.snippet]
+            .join(" ")
+            .toLowerCase()
+            .includes(query),
+        )
+        .slice(0, limit)
+        .map((hit) => ({ ...hit }));
+    },
     set_message_flag: (args) => {
       if (backend.flagError) {
         throw backend.flagError;
@@ -151,12 +267,7 @@ export function createBackend(options: BackendOptions = {}): Backend {
       }
       return { folders: backend.folders.length, added: 0, removed: 0 };
     },
-    open_message: () => ({
-      messageId: "<m1@example.com>",
-      textPlain: "正文内容",
-      htmlRaw: null,
-      charset: null,
-    }),
+    open_message: () => backend.messageBody,
     create_account: () => ({}),
 
     // ---------------- 写信（草稿 / 发送） ----------------
@@ -168,6 +279,26 @@ export function createBackend(options: BackendOptions = {}): Backend {
       const draft = args.draft as DraftInput;
       // 新建时后端分配 id；带着 id 回来的是更新同一份草稿。
       const id = draft.id ?? `draft-${++draftCounter}`;
+      // 后端自己读文件：前端给的 size 是 0，这里换成真实大小。
+      const attachments = draft.attachments.map((one) => ({
+        ...one,
+        size:
+          one.size > 0
+            ? one.size
+            : (backend.fileSizes[one.path] ?? DEFAULT_STUB_ATTACHMENT_SIZE),
+        mime: one.mime !== "" ? one.mime : guessMime(one.path),
+      }));
+      // 上限以后端为准（前端只是提前拦一道）。
+      if (attachments.length > MAX_ATTACHMENTS) {
+        throw new Error(`附件数量超过上限（最多 ${MAX_ATTACHMENTS} 个）`);
+      }
+      if (attachments.some((one) => one.size > MAX_ATTACHMENT_BYTES)) {
+        throw new Error("单个附件超过上限（10 MiB）");
+      }
+      const total = attachments.reduce((sum, one) => sum + one.size, 0);
+      if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+        throw new Error("附件总大小超过上限（20 MiB）");
+      }
       const dto: DraftDto = {
         id,
         accountId: draft.accountId,
@@ -180,6 +311,14 @@ export function createBackend(options: BackendOptions = {}): Backend {
         ...backend.drafts.filter((one) => one.id !== id),
         dto,
       ];
+      backend.draftDetails.set(id, {
+        ...dto,
+        cc: draft.cc,
+        bcc: draft.bcc,
+        bodyText: draft.bodyText,
+        bodyHtml: draft.bodyHtml ?? null,
+        attachments,
+      });
       return dto;
     },
     list_drafts: (args) => {
@@ -188,18 +327,69 @@ export function createBackend(options: BackendOptions = {}): Backend {
         .filter((one) => one.accountId === accountId)
         .map((one) => ({ ...one }));
     },
+    // 取草稿全文：面板用它把上次那封的内容填回编辑区。
+    get_draft: (args) => {
+      const id = String(args.id);
+      const detail = backend.draftDetails.get(id);
+      if (!detail) {
+        throw new Error(`没有 id=${id} 的草稿`);
+      }
+      return {
+        ...detail,
+        attachments: detail.attachments.map((one) => ({ ...one })),
+      };
+    },
     send_message: (args) => {
       if (backend.sendError) {
         throw backend.sendError;
       }
       const draft = args.draft as DraftInput;
       backend.sentDrafts.push(draft);
+      const entryId = `entry-${backend.sentDrafts.length}`;
+      backend.sentEntries.push({ entryId, draft, state: backend.sendState });
       return {
         messageId: `<sent-${backend.sentDrafts.length}@example.com>`,
+        entryId,
         state: backend.sendState,
         detail:
           backend.sendDetail ?? DEFAULT_SEND_DETAIL[backend.sendState],
       };
+    },
+    // 撤回一封发出去的信：它变回可编辑的草稿。
+    withdraw_draft: (args) => {
+      const entryId = String(args.entryId);
+      const index = backend.sentEntries.findIndex(
+        (one) => one.entryId === entryId,
+      );
+      if (index < 0) {
+        return false;
+      }
+      const entry = backend.sentEntries[index];
+      // 撤回来之后**还是同一条记录**（只是状态从「结果未确认」变回「草稿」），
+      // 所以草稿 id 就是条目 id——真实后端也是这么做的。
+      const id = entryId;
+      const dto: DraftDto = {
+        id,
+        accountId: entry.draft.accountId,
+        subject: entry.draft.subject,
+        to: entry.draft.to,
+        state: "draft",
+        updatedAt: Date.now(),
+      };
+      backend.drafts = [
+        ...backend.drafts.filter((one) => one.id !== id),
+        dto,
+      ];
+      backend.draftDetails.set(id, {
+        ...dto,
+        cc: entry.draft.cc,
+        bcc: entry.draft.bcc,
+        bodyText: entry.draft.bodyText,
+        bodyHtml: entry.draft.bodyHtml ?? null,
+        attachments: entry.draft.attachments.map((one) => ({ ...one })),
+      });
+      backend.sentEntries.splice(index, 1);
+      return true;
     },
   };
 

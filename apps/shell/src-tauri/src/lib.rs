@@ -34,7 +34,9 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        // 选附件用的系统对话框（选路径，字节由后端读）。
+        .plugin(tauri_plugin_dialog::init());
 
     // 单实例与开机自启只有桌面端实现，这两个插件在 Android 上不提供 API。
     #[cfg(desktop)]
@@ -65,11 +67,15 @@ pub fn run() {
             cmd::sync_account,
             cmd::list_folders,
             cmd::list_messages,
+            cmd::search_messages,
             cmd::open_message,
             cmd::save_credential,
             cmd::forget_credential,
             cmd::set_message_flag,
             cmd::save_draft,
+            cmd::list_drafts,
+            cmd::get_draft,
+            cmd::withdraw_draft,
             cmd::send_message,
         ])
         .run(tauri::generate_context!())
@@ -91,6 +97,21 @@ fn init_storage(app: &tauri::AppHandle) -> Result<AppState, Box<dyn std::error::
         let pool =
             xremail_store::open_pool_path(&db_path, &xremail_store::PoolConfig::default()).await?;
         xremail_store::migrate(&pool).await?;
+        // 补派生正文：升级之前入库的 HTML-only 邮件没有纯文本，搜不到。
+        //
+        // 写路径已经会派生（`upsert_message_body`），这里补的是**老数据**。
+        //
+        // **尽力而为**：这一步失败不应该拦住启动——
+        // 补不上只是那几封老邮件搜不到，邮箱照样能用。
+        match xremail_store::dao::message::backfill_derived_text(&pool).await {
+            Ok(patched) if patched > 0 => {
+                tracing::info!(patched, "已为历史邮件补出纯文本正文");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "补派生正文失败（老邮件可能搜不到）");
+            }
+        }
         Ok::<_, xremail_core::AppError>(pool)
     })?;
 

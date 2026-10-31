@@ -152,12 +152,17 @@ export interface Message {
   updatedAt: number;
 }
 
-/** 一封邮件的正文（对应 `xremail_core::model::MessageBody`）。 */
+/** 一封邮件的正文（对应 `xremail_shell_lib::service::message::MessageBodyView`）。 */
 export interface MessageBody {
   messageId: string;
   textPlain: string | null;
-  /** **未经清洗**的原始 HTML——清洗是渲染层的事（ARCHITECTURE §7）。 */
-  htmlRaw: string | null;
+  /**
+   * **后端消毒过的** HTML——标签与属性都在白名单里，
+   * 脚本、事件处理器、远程图片、样式都没了。
+   *
+   * 原始 HTML 不出后端（ARCHITECTURE §7），所以这里可以**直接渲染**。
+   */
+  htmlSafe: string | null;
   charset: string | null;
 }
 
@@ -249,6 +254,26 @@ export interface Notice {
 }
 
 /**
+ * 草稿里的一个附件（对应后端 `DraftAttachment`）。
+ *
+ * ## 为什么传路径而不是字节
+ *
+ * 原来前端把整个文件读成 `number[]` 塞进 IPC 参数：JSON 化之后体积是
+ * 二进制的 3–4 倍，几 MB 的文件就能把参数撑爆，几十 MB 的更是直接没戏。
+ * 改成只传**路径**，由后端自己读文件，前端内存与 IPC 参数体都小得多。
+ */
+export interface DraftAttachment {
+  /** 文件名（显示用）。 */
+  name: string;
+  /** MIME 类型；**可能是空串**（前端拿不到，后端会按扩展名兜底）。 */
+  mime: string;
+  /** 字节数。**前端选文件时拿不到真实大小**（先填 0），后端读完文件后会用真实大小覆盖。 */
+  size: number;
+  /** 本机绝对路径；**空串**表示「字节已经在库里了」（回填旧草稿时的情形）。 */
+  path: string;
+}
+
+/**
  * 待保存 / 待发送的邮件草稿（对应后端 `DraftInput`）。
  *
  * 嵌套结构体在 JSON 里也是 camelCase（Rust 侧 `#[serde(rename_all = "camelCase")]`），
@@ -256,26 +281,42 @@ export interface Notice {
  */
 export interface DraftInput {
   accountId: string;
-  /** 已有草稿的 id；新建时为 null。 */
-  id?: string | null;
+  /** 已有草稿的 id；新建时**不传**这个字段（后端会新分配一个）。 */
+  id?: string;
   to: string[];
   cc: string[];
   bcc: string[];
   subject: string;
+  /** 纯文本正文——**始终**要有：有些客户端只读纯文本。 */
   bodyText: string;
+  /** 富文本模式下的 HTML；纯文本模式下是 null（后端会消毒）。 */
   bodyHtml?: string | null;
-  /** 附件内容用 UTF-8 字节数组（后端再转 base64 存库）。 */
-  attachments: { filename: string; contentType: string; bytes: number[] }[];
+  attachments: DraftAttachment[];
 }
 
-/** 草稿（对应后端 `DraftDto`）。 */
+/** 草稿摘要（对应后端 `DraftDto`，`list_drafts` 的返回）。 */
 export interface DraftDto {
   id: string;
   accountId: string;
   subject: string;
   to: string[];
-  state: string;
+  /** `list_drafts` 只列草稿态，所以这里恒为 `"draft"`。 */
+  state: "draft";
+  /** 最后修改时间（epoch 毫秒）。 */
   updatedAt: number;
+}
+
+/**
+ * 草稿全文（对应后端 `DraftDetail`，`get_draft` 的返回）。
+ *
+ * 比 `DraftDto` 多了正文与附件——「接着上次那封改」要把整份内容填回编辑区。
+ */
+export interface DraftDetail extends DraftDto {
+  cc: string[];
+  bcc: string[];
+  bodyText: string;
+  bodyHtml: string | null;
+  attachments: DraftAttachment[];
 }
 
 /**
@@ -294,6 +335,13 @@ export interface DraftDto {
 export interface SendResult {
   /** 邮件的 Message-ID。 */
   messageId: string;
+  /**
+   * 发信条目 id。
+   *
+   * `uncertain` 时要用它才能把这封信撤回来（`withdraw_draft`）——
+   * 没有这个 id 就没法「撤回来改」。
+   */
+  entryId: string;
   /** sent = 服务器确认接受；uncertain = 不确定，**不能自动重发**；failed = 明确失败。 */
   state: "sent" | "uncertain" | "failed";
   /** 给用户看的一句话说明。 */
